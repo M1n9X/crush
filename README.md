@@ -237,6 +237,8 @@ $HOME/.local/share/crush/crush.json
 Crush can use LSPs for additional context to help inform its decisions, just
 like you would. LSPs can be added manually like so:
 
+For detailed information on configuring LSP integration, see the [LSP Configuration Guide](wiki/guides/05_Configuring_LSP.md).
+
 ```json
 {
   "$schema": "https://charm.land/crush.json",
@@ -264,6 +266,8 @@ Crush also supports Model Context Protocol (MCP) servers through three
 transport types: `stdio` for command-line servers, `http` for HTTP endpoints,
 and `sse` for Server-Sent Events. Environment variable expansion is supported
 using `$(echo $VAR)` syntax.
+
+For detailed information on configuring MCP integration, see the [MCP Configuration Guide](wiki/guides/06_Configuring_MCP.md).
 
 ```json
 {
@@ -653,6 +657,8 @@ providers. If you’re a provider interested in working with us,
 ## Contributing
 
 See the [contributing guide](https://github.com/charmbracelet/crush?tab=contributing-ov-file#contributing).
+
+For information about extending Crush's tool system, see the [Tool System Extension Guide](wiki/guides/04_Extending_Tool_System.md).
 
 ## Whatcha think?
 
