@@ -1,5 +1,9 @@
 # Crush Development Guide
 
+## Project Overview
+
+Crush is a terminal-based AI coding assistant built with Go and Charm's ecosystem (Bubble Tea, Lipgloss, Bubbles). It provides multi-model LLM support, session management, LSP integration, and extensible tooling via MCP (Model Context Protocol).
+
 ## Build/Test/Lint Commands
 
 - **Build**: `go build .` or `go run .`
@@ -9,6 +13,9 @@
 - **Lint**: `task lint:fix`
 - **Format**: `task fmt` (gofumpt -w .)
 - **Dev**: `task dev` (runs with profiling enabled)
+- **Install**: `task install` (installs to GOPATH/bin)
+- **Schema**: `task schema` (generates JSON schema for configuration)
+- **Release**: `task release` (creates and pushes semver tag)
 
 ## Code Style Guidelines
 
@@ -27,6 +34,25 @@
 - **JSON tags**: Use snake_case for JSON field names
 - **File permissions**: Use octal notation (0o755, 0o644) for file permissions
 - **Comments**: End comments in periods unless comments are at the end of the line.
+
+## Architecture
+
+### Core Components
+
+- **Agent System** (`internal/agent/`): Orchestrates AI interactions, session management, and tool execution
+- **TUI Layer** (`internal/tui/`): Terminal UI using Bubble Tea framework
+- **Database Layer** (`internal/db/`): SQLite database with sqlc-generated code
+- **LSP Integration** (`internal/lsp/`): Language Server Protocol client
+- **MCP Integration** (`internal/agent/tools/mcp/`): Model Context Protocol tools
+- **Configuration** (`internal/config/`): Configuration management and provider setup
+
+### Key Patterns
+
+- **Session-based Architecture**: All operations are scoped to sessions
+- **Tool System**: Extensible tool framework with built-in and MCP tools
+- **Provider Abstraction**: Multi-model LLM support via fantasy library
+- **Event-driven**: Pub/sub system for component communication
+- **Context Propagation**: Heavy use of context.Context for request lifecycle
 
 ## Testing with Mock Providers
 
@@ -51,6 +77,41 @@ func TestYourFunction(t *testing.T) {
 }
 ```
 
+## Database
+
+- **SQLite** database with migrations in `internal/db/migrations/`
+- **sqlc** generates type-safe Go code from SQL queries
+- **Goose** handles database migrations
+- Database file stored in `~/.crush/crush.db`
+
+## Configuration
+
+- **Primary config**: `crush.json` in project root or `~/.crush/crush.json`
+- **LSP configuration**: Supports multiple language servers per project
+- **Provider configuration**: Model endpoints and API keys
+- **Context files**: Searches for various agent instruction files (see `internal/config/config.go:25-42`)
+
+## Tool System
+
+### Built-in Tools
+- File operations (read, write, edit, glob)
+- Shell execution (bash, background jobs)
+- Code analysis (grep, references, diagnostics)
+- Web fetching (fetch, agentic_fetch)
+- Download utility
+
+### MCP Tools
+- External tool integration via Model Context Protocol
+- Supports http, stdio, and sse transport methods
+- Configured in `crush.json` under `mcp` section
+
+## Golden File Testing
+
+Extensive use of golden files for UI component testing:
+- Located in `testdata/` directories throughout the codebase
+- Use `go test ./... -update` to regenerate after changes
+- Test rendering output at different dimensions and states
+
 ## Formatting
 
 - ALWAYS format any Go code you write.
@@ -70,3 +131,9 @@ func TestYourFunction(t *testing.T) {
 - ALWAYS use semantic commits (`fix:`, `feat:`, `chore:`, `refactor:`, `docs:`, `sec:`, etc).
 - Try to keep commits to one line, not including your attribution. Only use
   multi-line commits when additional context is truly necessary.
+
+## Environment Variables
+
+- `CRUSH_PROFILE`: Enables pprof profiling on localhost:6060
+- `CGO_ENABLED=0`: Set in Taskfile for static builds
+- `GOEXPERIMENT=greenteagc`: Go experiment flag for better GC performance
