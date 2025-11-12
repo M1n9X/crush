@@ -34,6 +34,7 @@ This Wiki is organized into the following sections:
 ### 📖 Guides & References
 - **[Deployment Guide](guides/02_Deployment_Guide.md)** - Production deployment strategies
 - **[Contribution Guide](guides/03_Contribution_Guide.md)** - How to contribute to the project
+- **[Claude Code Integration](guides/07_Claude_Code_Integration.md)** - Configure and operate the Claude Code tool inside Crush
 
 ## 🎯 Project Overview
 
