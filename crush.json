@@ -2,6 +2,12 @@
   "$schema": "https://charm.land/crush.json",
   "lsp": {
     "gopls": {
+      "command": "$(go env GOPATH)/bin/gopls",
+      "filetypes": ["go", "gomod", "gowork", "gotmpl"],
+      "root_markers": ["go.work", "go.mod"],
+      "env": {
+        "PATH": "$(go env GOPATH)/bin:$PATH"
+      },
       "options": {
         "gofumpt": true,
         "codelenses": {
