@@ -91,7 +91,7 @@ The tool returns a JSON object containing:
   "num_turns": 5,
   "is_error": false,
   "error": "",
-  "model_used": "claude-sonnet"
+  "model_used": "sonnet"
 }
 ```
 

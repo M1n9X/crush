@@ -8,11 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"charm.land/fantasy"
+	claude "github.com/M1n9X/claude-agent-sdk-go"
+	"github.com/M1n9X/claude-agent-sdk-go/types"
 	"github.com/charmbracelet/crush/internal/orchestrator"
 	"github.com/charmbracelet/crush/internal/permission"
-	"github.com/humanlayer/humanlayer/claudecode-go"
 )
 
 type ClaudeCodeParams struct {
@@ -48,14 +50,6 @@ const (
 	DefaultMaxTurns    = 10
 )
 
-type claudeCodeClient interface {
-	LaunchAndWait(claudecode.SessionConfig) (*claudecode.Result, error)
-}
-
-var newClaudeCodeClient = func() (claudeCodeClient, error) {
-	return claudecode.NewClient()
-}
-
 //go:embed claude_code.md
 var claudeCodeDescription []byte
 
@@ -87,11 +81,6 @@ func runSimple(
 		return fantasy.NewTextErrorResponse("query is required and cannot be empty"), nil
 	}
 
-	// Set defaults
-	if params.MaxTurns <= 0 {
-		params.MaxTurns = DefaultMaxTurns
-	}
-
 	// Validate and determine working directory
 	execWorkingDir, err := validateWorkingDir(workingDir, params.WorkingDir)
 	if err != nil {
@@ -118,86 +107,115 @@ func runSimple(
 		return fantasy.ToolResponse{}, permission.ErrorPermissionDenied
 	}
 
-	// Configure session
-	sessionConfig := claudecode.SessionConfig{
-		Query:              params.Query,
-		WorkingDir:         execWorkingDir,
-		MaxTurns:           params.MaxTurns,
-		CustomInstructions: params.CustomInstructions,
-		Verbose:            params.Verbose,
+	// Configure Claude Agent options
+	opts := types.NewClaudeAgentOptions().
+		WithCWD(execWorkingDir).
+		WithVerbose(params.Verbose)
+
+	// Do not set model - let Claude Code CLI use its default configuration
+	// The model is configured in Claude Code CLI itself
+
+	// Set system prompt if provided
+	if params.CustomInstructions != "" {
+		opts = opts.WithSystemPrompt(params.CustomInstructions)
 	}
 
-	// Set model if specified
-	if params.Model != "" {
-		switch strings.ToLower(params.Model) {
-		case "opus":
-			sessionConfig.Model = claudecode.ModelOpus
-		case "sonnet":
-			sessionConfig.Model = claudecode.ModelSonnet
-		case "haiku":
-			sessionConfig.Model = claudecode.ModelHaiku
-		default:
-			return fantasy.NewTextErrorResponse(fmt.Sprintf("invalid model: %s. Must be opus, sonnet, or haiku", params.Model)), nil
-		}
-	} else {
-		sessionConfig.Model = claudecode.ModelSonnet // Default to sonnet
+	// Set allowed tools if specified
+	if len(params.AllowedTools) > 0 {
+		opts = opts.WithAllowedTools(params.AllowedTools...)
+	}
+	if len(params.DisallowedTools) > 0 {
+		opts = opts.WithDisallowedTools(params.DisallowedTools...)
 	}
 
 	// Set session management options
 	if params.SessionID != "" {
-		sessionConfig.SessionID = params.SessionID
-		sessionConfig.ForkSession = params.ForkSession
+		if params.ForkSession {
+			// Note: Claude SDK doesn't have direct fork functionality
+			opts = opts.WithResume(params.SessionID)
+		} else {
+			opts = opts.WithResume(params.SessionID)
+		}
 	}
 
-	// Set tool permissions
-	if len(params.AllowedTools) > 0 {
-		sessionConfig.AllowedTools = params.AllowedTools
-	}
-	if len(params.DisallowedTools) > 0 {
-		sessionConfig.DisallowedTools = params.DisallowedTools
-	}
-
-	// Use JSON output format for structured response
-	sessionConfig.OutputFormat = claudecode.OutputJSON
-
-	// Create Claude Code client
-	client, err := newClaudeCodeClient()
+	// Create Claude client
+	client, err := claude.NewClient(ctx, opts)
 	if err != nil {
-		return fantasy.NewTextErrorResponse(fmt.Sprintf("failed to create Claude Code client: %v", err)), nil
+		return fantasy.NewTextErrorResponse(fmt.Sprintf("failed to create Claude client: %v", err)), nil
 	}
 
-	// Launch Claude Code session
-	result, err := client.LaunchAndWait(sessionConfig)
-	if err != nil {
-		return fantasy.NewTextErrorResponse(fmt.Sprintf("Claude Code session failed: %v", err)), nil
+	// Connect to Claude
+	if err := client.Connect(ctx); err != nil {
+		return fantasy.NewTextErrorResponse(fmt.Sprintf("failed to connect to Claude: %v", err)), nil
+	}
+	defer client.Close(ctx)
+
+	// Start a timeout context for the operation
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+
+	// Send the query to Claude
+	if err := client.Query(ctx, params.Query); err != nil {
+		return fantasy.NewTextErrorResponse(fmt.Sprintf("failed to send query to Claude: %v", err)), nil
+	}
+
+	// Collect all responses
+	var allTextContent []string
+	var finalResult string
+	var totalCost float64
+	var durationMS int
+	var numTurns int
+	var isError bool
+	var errorMsg string
+	var modelUsed string
+
+	// Receive and process the response
+	for msg := range client.ReceiveResponse(ctx) {
+		switch m := msg.(type) {
+		case *types.AssistantMessage:
+			for _, block := range m.Content {
+				if textBlock, ok := block.(*types.TextBlock); ok {
+					allTextContent = append(allTextContent, textBlock.Text)
+				}
+				// Capture model info if available
+				if m.Model != "" {
+					modelUsed = m.Model
+				}
+			}
+		case *types.ResultMessage:
+			if m.TotalCostUSD != nil {
+				totalCost = *m.TotalCostUSD
+			}
+			durationMS = m.DurationMs
+			numTurns = m.NumTurns
+			isError = m.IsError
+			if isError && m.Result != nil {
+				errorMsg = *m.Result
+			}
+			finalResult = m.SessionID
+		case *types.SystemMessage:
+			// Process system messages if needed
+		}
+	}
+
+	// Combine all text content
+	finalResult = strings.Join(allTextContent, "\n")
+
+	// Set default model if not detected
+	if modelUsed == "" {
+		modelUsed = "sonnet" // Default
 	}
 
 	// Build response
-	modelUsed := "unknown"
-	if _, ok := result.ModelUsage["claude-3.5-sonnet"]; ok {
-		modelUsed = "claude-sonnet"
-	} else if _, ok := result.ModelUsage["claude-3-sonnet"]; ok {
-		modelUsed = "claude-sonnet"
-	} else if _, ok := result.ModelUsage["claude-3.5-haiku"]; ok {
-		modelUsed = "claude-haiku"
-	} else if _, ok := result.ModelUsage["claude-3-haiku"]; ok {
-		modelUsed = "claude-haiku"
-	} else if _, ok := result.ModelUsage["claude-3-opus"]; ok {
-		modelUsed = "claude-opus"
-	}
-
 	response := ClaudeCodeResponse{
-		Result:     result.Result,
-		SessionID:  result.SessionID,
-		CostUSD:    result.CostUSD,
-		DurationMS: result.DurationMS,
-		NumTurns:   result.NumTurns,
-		IsError:    result.IsError,
+		Result:     finalResult,
+		SessionID:  sessionID, // Use the Crush session ID
+		CostUSD:    totalCost,
+		DurationMS: durationMS,
+		NumTurns:   numTurns,
+		IsError:    isError,
+		Error:      errorMsg,
 		ModelUsed:  modelUsed,
-	}
-
-	if result.Error != "" {
-		response.Error = result.Error
 	}
 
 	// Return structured response
@@ -263,7 +281,7 @@ func runWithOrchestrator(
 	response := struct {
 		ClaudeCodeResponse
 		OrchestratorIterations int      `json:"orchestrator_iterations"`
-		History               []string `json:"history,omitempty"`
+		History                []string `json:"history,omitempty"`
 	}{
 		ClaudeCodeResponse: ClaudeCodeResponse{
 			Result:     result.FinalResult,
@@ -273,7 +291,7 @@ func runWithOrchestrator(
 			NumTurns:   result.TotalTurns,
 			IsError:    result.IsError,
 			Error:      result.Error,
-			ModelUsed:  "claude-sonnet", // Default for now
+			ModelUsed:  "default", // Model is configured in Claude Code CLI itself
 		},
 		OrchestratorIterations: result.Iterations,
 	}

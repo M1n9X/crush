@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/humanlayer/humanlayer/claudecode-go"
+	"github.com/M1n9X/claude-agent-sdk-go/types"
 )
 
 // Color codes
@@ -69,65 +69,41 @@ func colorize(color, text string) string {
 	return color + text + reset
 }
 
-// RenderEvent renders a single event
-func (r *StreamRenderer) RenderEvent(event claudecode.StreamEvent) {
+// RenderMessage renders a Claude Agent SDK message
+func (r *StreamRenderer) RenderMessage(msg types.Message) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	switch event.Type {
-	case "system":
-		r.renderSystemEvent(event)
-	case "assistant":
-		r.renderAssistantEvent(event)
-	case "user":
-		r.renderUserEvent(event)
-	case "result":
-		r.renderResultEvent(event)
+	switch m := msg.(type) {
+	case *types.SystemMessage:
+		r.renderSystemMessage(m)
+	case *types.AssistantMessage:
+		r.renderAssistantMessage(m)
+	case *types.UserMessage:
+		r.renderUserMessage(m)
+	case *types.ResultMessage:
+		r.renderResultMessage(m)
 	default:
-		// Unknown event type
+		// Unknown message type
 		fmt.Printf("\n%s %s\n",
 			colorize(dim, "?"),
-			colorize(dim, fmt.Sprintf("Unknown event type: %s", event.Type)))
+			colorize(dim, fmt.Sprintf("Unknown message type: %T", msg)))
 	}
 }
 
-func (r *StreamRenderer) renderSystemEvent(event claudecode.StreamEvent) {
-	if event.Subtype == "init" {
+func (r *StreamRenderer) renderSystemMessage(msg *types.SystemMessage) {
+	if msg.Subtype == types.SystemSubtypeInit {
 		// Model info
-		fmt.Printf("\n%s %s %s\n\n",
+		fmt.Printf("\n%s %s\n\n",
 			colorize(brightCyan, "▲"),
-			colorize(brightCyan, "Claude Code"),
-			colorize(dim, fmt.Sprintf("(model: %s)", event.Model)))
-
-		// Available tools
-		if len(event.Tools) > 0 {
-			fmt.Printf("  %s Available tools:\n", colorize(brightYellow, "◆"))
-			toolsList := formatToolsList(event.Tools)
-			fmt.Printf("    %s\n", colorize(dim, toolsList))
-			fmt.Println()
-		}
+			colorize(brightCyan, "Claude Code"))
 	}
 }
 
-func (r *StreamRenderer) renderAssistantEvent(event claudecode.StreamEvent) {
-	if event.Message == nil {
-		return
-	}
-
-	// Parse content
-	for _, content := range event.Message.Content {
-		switch content.Type {
-		case "thinking":
-			if !r.thinkingInProgress {
-				fmt.Printf("\n%s ", colorize(dim, "💭"))
-				r.thinkingInProgress = true
-				r.lastWasThinking = true
-			}
-			// Print thinking on same line
-			fmt.Print(colorize(italic+dim, "thinking..."))
-			r.lastWasThinking = true
-
-		case "text":
+func (r *StreamRenderer) renderAssistantMessage(msg *types.AssistantMessage) {
+	for _, content := range msg.Content {
+		switch block := content.(type) {
+		case *types.TextBlock:
 			if r.thinkingInProgress {
 				fmt.Println() // End thinking line
 				r.thinkingInProgress = false
@@ -137,7 +113,7 @@ func (r *StreamRenderer) renderAssistantEvent(event claudecode.StreamEvent) {
 			}
 
 			// Print text
-			text := content.Text
+			text := block.Text
 			if len(text) > 0 {
 				wrapped := wrapText(text, 80)
 				lines := strings.Split(wrapped, "\n")
@@ -154,7 +130,17 @@ func (r *StreamRenderer) renderAssistantEvent(event claudecode.StreamEvent) {
 			}
 			r.lastWasThinking = false
 
-		case "tool_use":
+		case *types.ThinkingBlock:
+			if !r.thinkingInProgress {
+				fmt.Printf("\n%s ", colorize(dim, "💭"))
+				r.thinkingInProgress = true
+				r.lastWasThinking = true
+			}
+			// Print thinking
+			fmt.Print(colorize(italic+dim, "thinking..."))
+			r.lastWasThinking = true
+
+		case *types.ToolUseBlock:
 			// Tool use notification
 			if r.thinkingInProgress {
 				fmt.Println() // End thinking line
@@ -162,38 +148,52 @@ func (r *StreamRenderer) renderAssistantEvent(event claudecode.StreamEvent) {
 			}
 			fmt.Printf("\n  %s Using tool:\n    %s %s\n",
 				colorize(brightYellow, "→"),
-				colorize(brightYellow, content.Name),
-				colorize(dim, fmt.Sprintf("(id: %s)", content.ID)))
+				colorize(brightYellow, block.Name),
+				colorize(dim, fmt.Sprintf("(id: %s)", block.ID)))
 			r.lastWasThinking = false
 
 			// Track tool use
 			toolUse := ToolUseInfo{
-				ID:        content.ID,
-				Name:      content.Name,
-				Input:     content.Input,
+				ID:        block.ID,
+				Name:      block.Name,
+				Input:     block.Input,
 				Timestamp: time.Now(),
 			}
 			r.toolUses = append(r.toolUses, toolUse)
 			r.currentToolUse = &r.toolUses[len(r.toolUses)-1]
-		}
-	}
-}
 
-func (r *StreamRenderer) renderUserEvent(event claudecode.StreamEvent) {
-	if event.Message == nil {
-		return
-	}
-	// Usually tool results
-	for _, content := range event.Message.Content {
-		if content.Type == "tool_result" {
+		case *types.ToolResultBlock:
+			if r.thinkingInProgress {
+				fmt.Println() // End thinking line
+				r.thinkingInProgress = false
+			}
 			fmt.Printf("  %s %s\n",
 				colorize(brightGreen, "✓"),
 				colorize(dim, "Tool execution complete"))
+			r.lastWasThinking = false
 		}
 	}
 }
 
-func (r *StreamRenderer) renderResultEvent(event claudecode.StreamEvent) {
+func (r *StreamRenderer) renderUserMessage(msg *types.UserMessage) {
+	// Usually tool results
+	// Content can be string or []types.ContentBlock
+	if contentStr, ok := msg.Content.(string); ok {
+		fmt.Printf("  %s %s\n",
+			colorize(brightGreen, "✓"),
+			colorize(dim, fmt.Sprintf("User: %s", contentStr)))
+	} else if contentBlocks, ok := msg.Content.([]types.ContentBlock); ok {
+		for _, block := range contentBlocks {
+			if _, ok := block.(*types.ToolResultBlock); ok {
+				fmt.Printf("  %s %s\n",
+					colorize(brightGreen, "✓"),
+					colorize(dim, "Tool execution complete"))
+			}
+		}
+	}
+}
+
+func (r *StreamRenderer) renderResultMessage(msg *types.ResultMessage) {
 	// End thinking if in progress
 	if r.thinkingInProgress {
 		fmt.Println()
@@ -205,60 +205,25 @@ func (r *StreamRenderer) renderResultEvent(event claudecode.StreamEvent) {
 		colorize(brightBlue+bold, "Result"))
 
 	// Cost
-	if event.CostUSD > 0 {
+	if msg.TotalCostUSD != nil && *msg.TotalCostUSD > 0 {
 		fmt.Printf("  %s Cost: %s\n",
 			colorize(dim, "•"),
-			colorize(brightYellow, fmt.Sprintf("$%.4f", event.CostUSD)))
+			colorize(brightYellow, fmt.Sprintf("$%.4f", *msg.TotalCostUSD)))
 	}
 
 	// Duration
-	if event.DurationMS > 0 {
-		duration := time.Duration(event.DurationMS) * time.Millisecond
+	if msg.DurationMs > 0 {
+		duration := time.Duration(msg.DurationMs) * time.Millisecond
 		fmt.Printf("  %s Duration: %s\n",
 			colorize(dim, "•"),
 			colorize(dim, duration.Round(time.Millisecond).String()))
 	}
 
 	// Turns
-	if event.NumTurns > 0 {
+	if msg.NumTurns > 0 {
 		fmt.Printf("  %s Turns: %d\n",
 			colorize(dim, "•"),
-			event.NumTurns)
-	}
-
-	// Model usage
-	if len(event.ModelUsage) > 0 {
-		fmt.Printf("  %s Model usage:\n", colorize(dim, "•"))
-		for model, usage := range event.ModelUsage {
-			costStr := ""
-			if usage.CostUSD > 0 {
-				costStr = fmt.Sprintf(" (%.4f USD)", usage.CostUSD)
-			}
-			fmt.Printf("    • %s: %d in, %d out%s\n",
-				colorize(dim, model),
-				usage.InputTokens,
-				usage.OutputTokens,
-				colorize(dim, costStr))
-		}
-	}
-
-	// Permission denials
-	if event.PermissionDenials != nil && len(event.PermissionDenials.Denials) > 0 {
-		fmt.Printf("  %s %s:\n",
-			colorize(red, "✗"),
-			colorize(red, "Permission denials"))
-		for _, denial := range event.PermissionDenials.Denials {
-			fmt.Printf("    • %s\n",
-				colorize(red, denial.ToolName))
-		}
-	}
-
-	// Error
-	if event.IsError && event.Error != "" {
-		fmt.Printf("\n%s %s\n\n%s\n",
-			colorize(brightRed, "✗"),
-			colorize(brightRed, "Error occurred:"),
-			colorize(red, event.Error))
+			msg.NumTurns)
 	}
 
 	fmt.Println()

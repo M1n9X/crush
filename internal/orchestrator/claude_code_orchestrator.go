@@ -10,7 +10,8 @@ import (
 
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/google/uuid"
-	"github.com/humanlayer/humanlayer/claudecode-go"
+	claude "github.com/M1n9X/claude-agent-sdk-go"
+	"github.com/M1n9X/claude-agent-sdk-go/types"
 )
 
 // Default configuration constants
@@ -50,9 +51,21 @@ type OrchestratorSession struct {
 	CurrentStep     int
 	MaxSteps        int
 	History         []Interaction
-	LastResult      *claudecode.Result
+	LastResult      *ClaudeResult
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+}
+
+// ClaudeResult represents the result from Claude Agent SDK
+type ClaudeResult struct {
+	Result     string
+	SessionID  string
+	CostUSD    float64
+	DurationMS int
+	NumTurns   int
+	IsError    bool
+	Error      string
+	ModelUsage map[string]interface{}
 }
 
 // Interaction records each interaction with Claude Code
@@ -163,18 +176,15 @@ func (o *ClaudeCodeOrchestrator) executeStep(
 		CreatedAt: time.Now(),
 	}
 
-	// Build session config with streaming
-	config := claudecode.SessionConfig{
-		Query:        query,
-		WorkingDir:   o.workingDir,
-		MaxTurns:     DefaultMaxTurns,
-		SessionID:    session.ClaudeSessionID,
-		OutputFormat: claudecode.OutputStreamJSON, // Use streaming
-		Verbose:      true,
-	}
+	// Configure Claude Agent options
+	opts := types.NewClaudeAgentOptions().
+		WithCWD(o.workingDir).
+		WithVerbose(true)
+	// Do not set model - let Claude Code CLI use its default configuration
+	// The model is configured in Claude Code CLI itself
 
-	// Create Claude Code client
-	client, err := claudecode.NewClient()
+	// Create Claude client
+	client, err := claude.NewClient(ctx, opts)
 	if err != nil {
 		o.logger.Printf("[Orchestrator] Failed to create client: %v", err)
 		interaction.Error = fmt.Sprintf("Failed to create client: %v", err)
@@ -182,80 +192,97 @@ func (o *ClaudeCodeOrchestrator) executeStep(
 		return interaction, false
 	}
 
-	// Launch session
-	o.logger.Printf("[Orchestrator] Launching Claude Code session")
+	// Connect to Claude
+	if err := client.Connect(ctx); err != nil {
+		o.logger.Printf("[Orchestrator] Failed to connect to Claude: %v", err)
+		interaction.Error = fmt.Sprintf("Failed to connect to Claude: %v", err)
+		interaction.IsError = true
+		return interaction, false
+	}
+	defer client.Close(ctx)
+
+	// Start a timeout context for the operation
+	ctx, cancel := context.WithTimeout(ctx, DefaultSessionTimeout)
+	defer cancel()
+
+	// Send the query to Claude
+	if err := client.Query(ctx, query); err != nil {
+		o.logger.Printf("[Orchestrator] Failed to send query to Claude: %v", err)
+		interaction.Error = fmt.Sprintf("Failed to send query to Claude: %v", err)
+		interaction.IsError = true
+		return interaction, false
+	}
+
+	// Collect all responses
+	var allTextContent []string
+	var totalCost float64
+	var numTurns int
+	var isError bool
+	var errorMsg string
 	startTime := time.Now()
 
-	claudeSession, err := client.Launch(config)
-	if err != nil {
-		o.logger.Printf("[Orchestrator] Failed to launch session: %v", err)
-		interaction.Error = fmt.Sprintf("Failed to launch session: %v", err)
-		interaction.IsError = true
-		return interaction, false
-	}
-
-	// Save session ID if it's a new session
-	if session.ClaudeSessionID == "" {
-		session.ClaudeSessionID = claudeSession.ID
-		o.logger.Printf("[Orchestrator] Created new Claude session: %s", session.ClaudeSessionID)
-	}
-
-	// Start goroutine to read and render events
-	eventWg := sync.WaitGroup{}
-	eventWg.Add(1)
-	go func() {
-		defer eventWg.Done()
-		for {
-			select {
-			case event, ok := <-claudeSession.Events:
-				if !ok {
-					return
+	// Receive and process the response
+	for msg := range client.ReceiveResponse(ctx) {
+		// Render the event
+		renderer.RenderMessage(msg)
+		switch m := msg.(type) {
+		case *types.AssistantMessage:
+			for _, block := range m.Content {
+				if textBlock, ok := block.(*types.TextBlock); ok {
+					allTextContent = append(allTextContent, textBlock.Text)
 				}
-				renderer.RenderEvent(event)
-			case <-ctx.Done():
-				return
+			}
+		case *types.ResultMessage:
+			if m.TotalCostUSD != nil {
+				totalCost = *m.TotalCostUSD
+			}
+			numTurns = m.NumTurns
+			isError = m.IsError
+			if isError && m.Result != nil {
+				errorMsg = *m.Result
 			}
 		}
-	}()
-
-	// Wait for completion with timeout
-	result, err := o.waitWithTimeout(ctx, claudeSession)
-
-	// Wait for event processing to complete
-	eventWg.Wait()
-
-	duration := time.Since(startTime)
-
-	if err != nil {
-		o.logger.Printf("[Orchestrator] Session failed: %v", err)
-		interaction.Error = fmt.Sprintf("Session failed: %v", err)
-		interaction.IsError = true
-		interaction.DurationMS = int(duration.Milliseconds())
-		return interaction, false
 	}
 
+	// Calculate duration
+	duration := time.Since(startTime)
+
+	// Combine all text content
+	resultText := strings.Join(allTextContent, "\n")
+
 	// Record result
-	interaction.Result = result.Result
-	interaction.CostUSD = result.CostUSD
-	interaction.DurationMS = result.DurationMS
-	interaction.NumTurns = result.NumTurns
-	interaction.IsError = result.IsError
-	if result.IsError {
-		interaction.Error = result.Error
+	interaction.Result = resultText
+	interaction.CostUSD = totalCost
+	interaction.DurationMS = int(duration.Milliseconds())
+	interaction.NumTurns = numTurns
+	interaction.IsError = isError
+	if isError {
+		interaction.Error = errorMsg
+	}
+
+	// Create Claude result for storing in session
+	claudeResult := &ClaudeResult{
+		Result:     resultText,
+		SessionID:  session.ClaudeSessionID,
+		CostUSD:    totalCost,
+		DurationMS: int(duration.Milliseconds()),
+		NumTurns:   numTurns,
+		IsError:    isError,
+		Error:      errorMsg,
 	}
 
 	// Store result in session
-	session.LastResult = result
+	session.LastResult = claudeResult
 	session.UpdatedAt = time.Now()
 
 	o.logger.Printf("[Orchestrator] Step %d completed: cost=$%.4f, turns=%d, duration=%v",
-		step, result.CostUSD, result.NumTurns, duration)
+		step, totalCost, numTurns, duration)
 
 	// Render summary
-	renderer.RenderSummary(result.CostUSD, duration, result.NumTurns)
+	renderer.RenderSummary(totalCost, duration, numTurns)
 
 	// Analyze result and decide next action
-	analysis := o.analyzeResult(result, err)
+	analysis := o.analyzeResult(claudeResult, nil)
 	shouldContinue := o.shouldContinue(session, analysis)
 
 	if shouldContinue {
@@ -267,7 +294,7 @@ func (o *ClaudeCodeOrchestrator) executeStep(
 
 // analyzeResult analyzes the execution result
 func (o *ClaudeCodeOrchestrator) analyzeResult(
-	result *claudecode.Result,
+	result *ClaudeResult,
 	err error,
 ) *ResultAnalysis {
 	analysis := &ResultAnalysis{
@@ -283,12 +310,8 @@ func (o *ClaudeCodeOrchestrator) analyzeResult(
 	if result.IsError {
 		analysis.ErrorType = "claude_error"
 		analysis.ErrorMessage = result.Error
-
-		// Check for permission denials
-		if pd := result.PermissionDenials; pd != nil && len(pd.Denials) > 0 {
-			analysis.PermissionsDenied = pd.Denials
-			analysis.NeedPermissionAdjustment = true
-		}
+		// Note: Permission denials are handled differently in the new SDK
+		// analysis.PermissionsDenied would be different for the new SDK
 	}
 
 	// Store basic metrics
@@ -446,7 +469,7 @@ type ResultAnalysis struct {
 	ErrorType                string
 	ErrorMessage             string
 	ShouldRetry              bool
-	PermissionsDenied        []claudecode.PermissionDenial
+	PermissionsDenied        []string // Changed from claudecode.PermissionDenial to string slice
 	NeedPermissionAdjustment bool
 	CostUSD                  float64
 	NumTurns                 int
@@ -469,39 +492,3 @@ type Adjustment struct {
 	Value  interface{}
 }
 
-// waitWithTimeout waits for Claude Code session completion with timeout support
-func (o *ClaudeCodeOrchestrator) waitWithTimeout(
-	ctx context.Context,
-	claudeSession *claudecode.Session,
-) (*claudecode.Result, error) {
-	// Create timeout context
-	ctx, cancel := context.WithTimeout(ctx, DefaultSessionTimeout)
-	defer cancel()
-
-	// Channels for communication
-	resultChan := make(chan *claudecode.Result, 1)
-	errChan := make(chan error, 1)
-
-	// Start Wait in a goroutine
-	go func() {
-		result, err := claudeSession.Wait()
-		if err != nil {
-			errChan <- err
-		} else {
-			resultChan <- result
-		}
-	}()
-
-	// Wait for completion, error, or timeout
-	select {
-	case result := <-resultChan:
-		return result, nil
-	case err := <-errChan:
-		return nil, err
-	case <-ctx.Done():
-		if ctx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("claude code session timed out after %v", DefaultSessionTimeout)
-		}
-		return nil, fmt.Errorf("claude code session cancelled: %v", ctx.Err())
-	}
-}

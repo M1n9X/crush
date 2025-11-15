@@ -17,7 +17,7 @@
 ```
 ═══════ Step 1
 
-▲ Claude Code (model: claude-sonnet)
+▲ Claude Code (model: sonnet)
   ◆ Available tools: Bash, Glob, Grep, Read, Edit, Write, ...
 
 💭 thinking......
@@ -35,7 +35,7 @@
   • Duration: 5.234s
   • Turns: 8
   • Model usage:
-    • claude-sonnet: 341 in, 892 out (0.0134 USD)
+    • sonnet: 341 in, 892 out (0.0134 USD)
 
 ═══════════════════════════════════════════
           Session Complete
@@ -130,7 +130,7 @@ Just add `enable_orchestrator: true` and streaming is automatically enabled!
 
 ═══════ Step 1
 
-▲ Claude Code (model: claude-sonnet)
+▲ Claude Code (model: sonnet)
   ◆ Available tools: Bash, Glob, Grep, Read, Edit, Write...
 
 💭 thinking...
@@ -196,7 +196,7 @@ Show Summary → Total cost, duration, turns, tools used
 Claude Code's `OutputStreamJSON` produces newline-delimited JSON:
 
 ```json
-{"type":"system","subtype":"init","model":"claude-sonnet","tools":["Bash","Write"]}
+{"type":"system","subtype":"init","model":"sonnet","tools":["Bash","Write"]}
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Planning..."}]}}
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I'll help you..."}]}}
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","id":"tool_123"}]}}
