@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"charm.land/fantasy"
@@ -32,9 +33,9 @@ func (d *demoPermissionService) Request(opts permission.CreatePermissionRequest)
 func (d *demoPermissionService) GrantPersistent(permission permission.PermissionRequest) {}
 func (d *demoPermissionService) Grant(permission permission.PermissionRequest)           {}
 func (d *demoPermissionService) Deny(permission permission.PermissionRequest)            {}
-func (d *demoPermissionService) AutoApproveSession(sessionID string)                   {}
-func (d *demoPermissionService) SetSkipRequests(skip bool)                             {}
-func (d *demoPermissionService) SkipRequests() bool                                  { return false }
+func (d *demoPermissionService) AutoApproveSession(sessionID string)                     {}
+func (d *demoPermissionService) SetSkipRequests(skip bool)                               {}
+func (d *demoPermissionService) SkipRequests() bool                                      { return false }
 func (d *demoPermissionService) Subscribe(ctx context.Context) <-chan pubsub.Event[permission.PermissionRequest] {
 	return make(<-chan pubsub.Event[permission.PermissionRequest])
 }
@@ -44,20 +45,20 @@ func (d *demoPermissionService) SubscribeNotifications(ctx context.Context) <-ch
 
 // Color codes
 const (
-	reset         = "\033[0m"
-	bold          = "\033[1m"
-	dim           = "\033[2m"
-	italic        = "\033[3m"
-	underline     = "\033[4m"
+	reset     = "\033[0m"
+	bold      = "\033[1m"
+	dim       = "\033[2m"
+	italic    = "\033[3m"
+	underline = "\033[4m"
 
-	black         = "\033[30m"
-	red           = "\033[31m"
-	green         = "\033[32m"
-	yellow        = "\033[33m"
-	blue          = "\033[34m"
-	magenta       = "\033[35m"
-	cyan          = "\033[36m"
-	white         = "\033[37m"
+	black   = "\033[30m"
+	red     = "\033[31m"
+	green   = "\033[32m"
+	yellow  = "\033[33m"
+	blue    = "\033[34m"
+	magenta = "\033[35m"
+	cyan    = "\033[36m"
+	white   = "\033[37m"
 
 	brightBlack   = "\033[90m"
 	brightRed     = "\033[91m"
@@ -96,8 +97,14 @@ func main() {
 	// Create permission service
 	permService := &demoPermissionService{}
 
+	// Create workspace directory if it doesn't exist
+	workspaceDir := "./claude_code_streaming_workspace"
+	if err := os.MkdirAll(workspaceDir, 0755); err != nil {
+		log.Fatalf("Failed to create workspace directory: %v", err)
+	}
+
 	// Create Claude Code tool
-	claudeTool := tools.NewClaudeCodeTool(permService, "/tmp")
+	claudeTool := tools.NewClaudeCodeTool(permService, workspaceDir)
 
 	// Example task - something that will use multiple tools
 	task := `Create a simple Python script that:

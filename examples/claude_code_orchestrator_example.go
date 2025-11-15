@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 
 	"charm.land/fantasy"
 	"github.com/charmbracelet/crush/internal/agent/tools"
@@ -26,9 +27,9 @@ func (d *demoPermissionService) Request(opts permission.CreatePermissionRequest)
 func (d *demoPermissionService) GrantPersistent(permission permission.PermissionRequest) {}
 func (d *demoPermissionService) Grant(permission permission.PermissionRequest)           {}
 func (d *demoPermissionService) Deny(permission permission.PermissionRequest)            {}
-func (d *demoPermissionService) AutoApproveSession(sessionID string)                   {}
-func (d *demoPermissionService) SetSkipRequests(skip bool)                             {}
-func (d *demoPermissionService) SkipRequests() bool                                  { return false }
+func (d *demoPermissionService) AutoApproveSession(sessionID string)                     {}
+func (d *demoPermissionService) SetSkipRequests(skip bool)                               {}
+func (d *demoPermissionService) SkipRequests() bool                                      { return false }
 func (d *demoPermissionService) Subscribe(ctx context.Context) <-chan pubsub.Event[permission.PermissionRequest] {
 	return make(<-chan pubsub.Event[permission.PermissionRequest])
 }
@@ -38,13 +39,20 @@ func (d *demoPermissionService) SubscribeNotifications(ctx context.Context) <-ch
 
 func main() {
 	fmt.Println("🚀 Claude Code Orchestrator Example")
-	fmt.Println("====================================\n")
+	fmt.Println("====================================")
 
 	// Create permission service
 	permService := &demoPermissionService{}
 
+	// Create workspace directory if it doesn't exist
+	workspaceDir := "./claude_code_orchestrator_workspace"
+	if err := os.MkdirAll(workspaceDir, 0755); err != nil {
+		log.Printf("❌ Failed to create workspace directory: %v\n", err)
+		return
+	}
+
 	// Create Claude Code tool
-	claudeTool := tools.NewClaudeCodeTool(permService, "/tmp")
+	claudeTool := tools.NewClaudeCodeTool(permService, workspaceDir)
 
 	// Example: Multi-turn orchestration for complex task
 	fmt.Println("📋 Example: Multi-turn Code Generation with Orchestration")
@@ -82,15 +90,15 @@ func main() {
 
 	// Parse response
 	var response struct {
-		Result               string   `json:"result"`
-		SessionID            string   `json:"session_id"`
-		CostUSD              float64  `json:"cost_usd"`
-		DurationMS           int      `json:"duration_ms"`
-		NumTurns             int      `json:"num_turns"`
-		OrchestratorIterations int    `json:"orchestrator_iterations"`
-		IsError              bool     `json:"is_error"`
-		Error                string   `json:"error,omitempty"`
-		History              []string `json:"history,omitempty"`
+		Result                 string   `json:"result"`
+		SessionID              string   `json:"session_id"`
+		CostUSD                float64  `json:"cost_usd"`
+		DurationMS             int      `json:"duration_ms"`
+		NumTurns               int      `json:"num_turns"`
+		OrchestratorIterations int      `json:"orchestrator_iterations"`
+		IsError                bool     `json:"is_error"`
+		Error                  string   `json:"error,omitempty"`
+		History                []string `json:"history,omitempty"`
 	}
 
 	if err := json.Unmarshal([]byte(result.Content), &response); err != nil {
