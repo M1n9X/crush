@@ -469,7 +469,7 @@ func TestConfig_setupAgentsWithNoDisabledTools(t *testing.T) {
 
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)
-	assert.Equal(t, []string{"glob", "grep", "ls", "sourcegraph", "view"}, taskAgent.AllowedTools)
+	assert.Equal(t, []string{"semantic_symbol_overview", "semantic_find_symbol", "semantic_find_references", "glob", "grep", "ls", "sourcegraph", "view"}, taskAgent.AllowedTools)
 }
 
 func TestConfig_setupAgentsWithDisabledTools(t *testing.T) {
@@ -487,11 +487,33 @@ func TestConfig_setupAgentsWithDisabledTools(t *testing.T) {
 	coderAgent, ok := cfg.Agents[AgentCoder]
 	require.True(t, ok)
 
-	assert.Equal(t, []string{"agent", "bash", "job_output", "job_kill", "multiedit", "lsp_diagnostics", "lsp_references", "fetch", "agentic_fetch", "glob", "ls", "sourcegraph", "view", "write"}, coderAgent.AllowedTools)
+	assert.Equal(t, []string{
+		"agent",
+		"bash",
+		"job_output",
+		"job_kill",
+		"multiedit",
+		"lsp_diagnostics",
+		"lsp_references",
+		"semantic_symbol_overview",
+		"semantic_find_symbol",
+		"semantic_find_references",
+		"semantic_replace_symbol_body",
+		"semantic_insert_before_symbol",
+		"semantic_insert_after_symbol",
+		"semantic_rename_symbol",
+		"fetch",
+		"agentic_fetch",
+		"glob",
+		"ls",
+		"sourcegraph",
+		"view",
+		"write",
+	}, coderAgent.AllowedTools)
 
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)
-	assert.Equal(t, []string{"glob", "ls", "sourcegraph", "view"}, taskAgent.AllowedTools)
+	assert.Equal(t, []string{"semantic_symbol_overview", "semantic_find_symbol", "semantic_find_references", "glob", "ls", "sourcegraph", "view"}, taskAgent.AllowedTools)
 }
 
 func TestConfig_setupAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
@@ -503,6 +525,9 @@ func TestConfig_setupAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
 				"ls",
 				"sourcegraph",
 				"view",
+				"semantic_symbol_overview",
+				"semantic_find_symbol",
+				"semantic_find_references",
 			},
 		},
 	}
@@ -510,7 +535,24 @@ func TestConfig_setupAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
 	cfg.SetupAgents()
 	coderAgent, ok := cfg.Agents[AgentCoder]
 	require.True(t, ok)
-	assert.Equal(t, []string{"agent", "bash", "job_output", "job_kill", "download", "edit", "multiedit", "lsp_diagnostics", "lsp_references", "fetch", "agentic_fetch", "write"}, coderAgent.AllowedTools)
+	assert.Equal(t, []string{
+		"agent",
+		"bash",
+		"job_output",
+		"job_kill",
+		"download",
+		"edit",
+		"multiedit",
+		"lsp_diagnostics",
+		"lsp_references",
+		"semantic_replace_symbol_body",
+		"semantic_insert_before_symbol",
+		"semantic_insert_after_symbol",
+		"semantic_rename_symbol",
+		"fetch",
+		"agentic_fetch",
+		"write",
+	}, coderAgent.AllowedTools)
 
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)

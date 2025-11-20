@@ -228,6 +228,51 @@ func applyDocumentChange(change protocol.DocumentChange) error {
 	return nil
 }
 
+// WorkspaceEditPaths returns the unique filesystem paths affected by the workspace edit.
+func WorkspaceEditPaths(edit protocol.WorkspaceEdit) []string {
+	seen := make(map[string]struct{})
+	add := func(uri protocol.DocumentURI) {
+		if uri == "" {
+			return
+		}
+		path, err := uri.Path()
+		if err != nil || path == "" {
+			return
+		}
+		if _, ok := seen[path]; ok {
+			return
+		}
+		seen[path] = struct{}{}
+	}
+
+	for uri := range edit.Changes {
+		add(uri)
+	}
+
+	for _, change := range edit.DocumentChanges {
+		if change.TextDocumentEdit != nil {
+			add(change.TextDocumentEdit.TextDocument.URI)
+		}
+		if change.CreateFile != nil {
+			add(change.CreateFile.URI)
+		}
+		if change.RenameFile != nil {
+			add(change.RenameFile.OldURI)
+			add(change.RenameFile.NewURI)
+		}
+		if change.DeleteFile != nil {
+			add(change.DeleteFile.URI)
+		}
+	}
+
+	paths := make([]string, 0, len(seen))
+	for path := range seen {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return paths
+}
+
 // ApplyWorkspaceEdit applies the given WorkspaceEdit to the filesystem
 func ApplyWorkspaceEdit(edit protocol.WorkspaceEdit) error {
 	// Handle Changes field

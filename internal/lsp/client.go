@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -19,11 +20,13 @@ import (
 	powernap "github.com/charmbracelet/x/powernap/pkg/lsp"
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 	"github.com/charmbracelet/x/powernap/pkg/transport"
+	"unsafe"
 )
 
 type Client struct {
 	client *powernap.Client
 	name   string
+	conn   *transport.Connection
 
 	// File types this LSP server handles (e.g., .go, .rs, .py)
 	fileTypes []string
@@ -94,10 +97,36 @@ func New(ctx context.Context, name string, config config.LSPConfig, resolver con
 		config:      config,
 	}
 
+	conn, err := extractPowernapConnection(powernapClient)
+	if err != nil {
+		return nil, fmt.Errorf("failed to access lsp connection: %w", err)
+	}
+	client.conn = conn
+
 	// Initialize server state
 	client.serverState.Store(StateStarting)
 
 	return client, nil
+}
+
+func extractPowernapConnection(client *powernap.Client) (*transport.Connection, error) {
+	val := reflect.ValueOf(client)
+	if val.Kind() != reflect.Pointer || val.IsNil() {
+		return nil, fmt.Errorf("invalid powernap client")
+	}
+	elem := val.Elem()
+	field := elem.FieldByName("conn")
+	if !field.IsValid() {
+		return nil, fmt.Errorf("powernap client has no conn field")
+	}
+	// Access unexported field using unsafe pointer. This is a contained workaround until powernap exposes the connection.
+	ptr := unsafe.Pointer(field.UnsafeAddr())
+	connVal := reflect.NewAt(field.Type(), ptr).Elem()
+	conn, ok := connVal.Interface().(*transport.Connection)
+	if !ok {
+		return nil, fmt.Errorf("conn field is not a transport.Connection")
+	}
+	return conn, nil
 }
 
 // Initialize initializes the LSP client and returns the server capabilities.
@@ -453,6 +482,134 @@ func (c *Client) FindReferences(ctx context.Context, filepath string, line, char
 	// NOTE: line and character should be 0-based.
 	// See: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#position
 	return c.client.FindReferences(ctx, filepath, line-1, character-1, includeDeclaration)
+}
+
+// RenameSymbol performs a textDocument/rename and returns the workspace edit without applying it.
+func (c *Client) RenameSymbol(ctx context.Context, filepath string, line, character int, newName string) (protocol.WorkspaceEdit, error) {
+	if c.conn == nil {
+		return protocol.WorkspaceEdit{}, fmt.Errorf("lsp connection not available")
+	}
+
+	if err := c.OpenFileOnDemand(ctx, filepath); err != nil {
+		return protocol.WorkspaceEdit{}, err
+	}
+
+	params := protocol.RenameParams{
+		TextDocument: protocol.TextDocumentIdentifier{
+			URI: protocol.DocumentURI(protocol.URIFromPath(filepath)),
+		},
+		Position: protocol.Position{
+			Line:      uint32(line - 1),
+			Character: uint32(character - 1),
+		},
+		NewName: newName,
+	}
+
+	var edit protocol.WorkspaceEdit
+	if err := c.conn.Call(ctx, "textDocument/rename", params, &edit); err != nil {
+		return protocol.WorkspaceEdit{}, fmt.Errorf("rename request failed: %w", err)
+	}
+
+	return edit, nil
+}
+
+// WorkspaceSymbols retrieves workspace symbols using workspace/symbol.
+func (c *Client) WorkspaceSymbols(ctx context.Context, query string) ([]protocol.WorkspaceSymbol, error) {
+	if c.conn == nil {
+		return nil, fmt.Errorf("lsp connection not available")
+	}
+	params := protocol.WorkspaceSymbolParams{Query: query}
+	var symbols []protocol.WorkspaceSymbol
+	if err := c.conn.Call(ctx, "workspace/symbol", params, &symbols); err != nil {
+		return nil, fmt.Errorf("%s", err)
+	}
+	return symbols, nil
+}
+
+// SignatureHelp retrieves signature help at the given position.
+func (c *Client) SignatureHelp(ctx context.Context, filePath string, line, character int) (*protocol.SignatureHelp, error) {
+	if c.conn == nil {
+		return nil, fmt.Errorf("lsp connection not available")
+	}
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve path: %w", err)
+	}
+	if err := c.OpenFileOnDemand(ctx, absPath); err != nil {
+		return nil, err
+	}
+
+	params := protocol.SignatureHelpParams{
+		TextDocumentPositionParams: protocol.TextDocumentPositionParams{
+			TextDocument: protocol.TextDocumentIdentifier{
+				URI: protocol.DocumentURI(protocol.URIFromPath(absPath)),
+			},
+			Position: protocol.Position{
+				Line:      uint32(line - 1),
+				Character: uint32(character - 1),
+			},
+		},
+	}
+	var help protocol.SignatureHelp
+	if err := c.conn.Call(ctx, "textDocument/signatureHelp", params, &help); err != nil {
+		return nil, err
+	}
+	return &help, nil
+}
+
+// DocumentSymbols retrieves document symbols for the given file using textDocument/documentSymbol.
+func (c *Client) DocumentSymbols(ctx context.Context, filePath string) ([]protocol.DocumentSymbol, error) {
+	if c.conn == nil {
+		return nil, fmt.Errorf("lsp connection not available")
+	}
+
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve path: %w", err)
+	}
+
+	if err := c.OpenFileOnDemand(ctx, absPath); err != nil {
+		return nil, err
+	}
+
+	params := protocol.DocumentSymbolParams{
+		TextDocument: protocol.TextDocumentIdentifier{
+			URI: protocol.DocumentURI(protocol.URIFromPath(absPath)),
+		},
+	}
+
+	var raw protocol.Or_Result_textDocument_documentSymbol
+	if err := c.conn.Call(ctx, "textDocument/documentSymbol", params, &raw); err != nil {
+		return nil, fmt.Errorf("documentSymbol request failed: %w", err)
+	}
+
+	results, err := raw.Results()
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse documentSymbol response: %w", err)
+	}
+
+	symbols := make([]protocol.DocumentSymbol, 0, len(results))
+	for _, res := range results {
+		switch v := res.(type) {
+		case *protocol.DocumentSymbol:
+			if v != nil {
+				symbols = append(symbols, *v)
+			}
+		case *protocol.SymbolInformation:
+			if v != nil {
+				symbols = append(symbols, protocol.DocumentSymbol{
+					Name:           v.Name,
+					Kind:           v.Kind,
+					Range:          v.Location.Range,
+					SelectionRange: v.Location.Range,
+				})
+			}
+		default:
+			slog.Debug("unknown documentSymbol result type", "type", fmt.Sprintf("%T", res))
+		}
+	}
+
+	return symbols, nil
 }
 
 // HasRootMarkers checks if any of the specified root marker patterns exist in the given directory.

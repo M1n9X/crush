@@ -353,7 +353,18 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 	)
 
 	if len(c.cfg.LSP) > 0 {
-		allTools = append(allTools, tools.NewDiagnosticsTool(c.lspClients), tools.NewReferencesTool(c.lspClients))
+		allTools = append(
+			allTools,
+			tools.NewDiagnosticsTool(c.lspClients),
+			tools.NewReferencesTool(c.lspClients),
+			tools.NewSemanticOverviewTool(c.lspClients, c.permissions, c.history, c.cfg.WorkingDir()),
+			tools.NewSemanticFindSymbolTool(c.lspClients, c.permissions, c.history, c.cfg.WorkingDir()),
+			tools.NewSemanticFindReferencesTool(c.lspClients, c.permissions, c.history, c.cfg.WorkingDir()),
+			tools.NewSemanticReplaceBodyTool(c.lspClients, c.permissions, c.history, c.cfg.WorkingDir()),
+			tools.NewSemanticInsertBeforeTool(c.lspClients, c.permissions, c.history, c.cfg.WorkingDir()),
+			tools.NewSemanticInsertAfterTool(c.lspClients, c.permissions, c.history, c.cfg.WorkingDir()),
+			tools.NewSemanticRenameTool(c.lspClients, c.permissions, c.history, c.cfg.WorkingDir()),
+		)
 	}
 
 	var filteredTools []fantasy.AgentTool
