@@ -13,6 +13,8 @@ import (
 	"github.com/charmbracelet/crush/internal/agent/prompt"
 	"github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/config"
+	"github.com/charmbracelet/crush/internal/message"
+	"github.com/charmbracelet/crush/internal/pubsub"
 )
 
 //go:embed templates/subagent_tool.md
@@ -35,9 +37,14 @@ const (
 
 // subAgentTool exposes a configurable subagent powered by user-defined profiles.
 func (c *coordinator) subAgentTool(ctx context.Context) (fantasy.AgentTool, error) {
-	agentCfg, ok := c.cfg.Agents[config.AgentTask]
+	agentCfg, ok := c.cfg.Agents[config.AgentCoder]
 	if !ok {
-		return nil, errors.New("task agent not configured")
+		// Fallback to task agent if coder is missing
+		var taskOK bool
+		agentCfg, taskOK = c.cfg.Agents[config.AgentTask]
+		if !taskOK {
+			return nil, errors.New("coder or task agent not configured")
+		}
 	}
 
 	toolDescription := strings.TrimSpace(string(subAgentToolDescription))
@@ -99,6 +106,8 @@ func (c *coordinator) subAgentTool(ctx context.Context) (fantasy.AgentTool, erro
 			if err != nil {
 				return fantasy.ToolResponse{}, fmt.Errorf("error creating session: %s", err)
 			}
+			// Subagent sessions are read-only by design; auto-approve to avoid permission prompts.
+			c.permissions.AutoApproveSession(session.ID)
 
 			// Build a derived agent config with a per-subagent tool allowlist.
 			baseTools := filterToolNames(agentCfg.AllowedTools, SubAgentToolName, AgentToolName)
@@ -137,10 +146,22 @@ func (c *coordinator) subAgentTool(ctx context.Context) (fantasy.AgentTool, erro
 				return fantasy.NewTextErrorResponse(fmt.Sprintf("error preparing system prompt: %s", err)), nil
 			}
 
+			// Forward subagent logs to parent session for streaming visibility.
+			progressCtx, progressCancel := context.WithCancel(ctx)
+			defer progressCancel()
+			go c.forwardSubAgentLogs(progressCtx, session.ID, sessionID, call.ID, definition.Name)
+
 			agent, err := c.buildAgent(ctx, sysPrompt, derivedAgentCfg)
 			if err != nil {
 				return fantasy.NewTextErrorResponse(fmt.Sprintf("error building subagent: %s", err)), nil
 			}
+
+			// Build tools synchronously to ensure subagent has its allowlisted tools available immediately.
+			subAgentTools, err := c.buildTools(ctx, derivedAgentCfg)
+			if err != nil {
+				return fantasy.NewTextErrorResponse(fmt.Sprintf("error building subagent tools: %s", err)), nil
+			}
+			agent.SetTools(subAgentTools)
 
 			model := agent.Model()
 			maxTokens := model.CatwalkCfg.DefaultMaxTokens
@@ -179,6 +200,9 @@ func (c *coordinator) subAgentTool(ctx context.Context) (fantasy.AgentTool, erro
 			if err != nil {
 				return fantasy.NewTextErrorResponse("error generating response"), nil
 			}
+
+			// Stop forwarding logs
+			progressCancel()
 
 			updatedSession, err := c.sessions.Get(ctx, session.ID)
 			if err != nil {
@@ -278,4 +302,55 @@ func sortedModelTypes(models map[config.SelectedModelType]config.SelectedModel) 
 	}
 	slices.Sort(keys)
 	return keys
+}
+
+func (c *coordinator) forwardSubAgentLogs(ctx context.Context, subSessionID, parentSessionID, toolCallID, subagentName string) {
+	events := c.messages.Subscribe(ctx)
+	lastContent := make(map[string]string)
+
+	for event := range events {
+		if event.Type != pubsub.CreatedEvent && event.Type != pubsub.UpdatedEvent {
+			continue
+		}
+		msg := event.Payload
+		if msg.SessionID != subSessionID {
+			continue
+		}
+		var text string
+		switch msg.Role {
+		case message.Assistant:
+			text = strings.TrimSpace(msg.Content().Text)
+		case message.Tool:
+			if results := msg.ToolResults(); len(results) > 0 {
+				text = strings.TrimSpace(results[0].Content)
+			}
+		default:
+			continue
+		}
+		if text == "" {
+			continue
+		}
+
+		prev := lastContent[msg.ID]
+		delta := text
+		if strings.HasPrefix(text, prev) {
+			delta = strings.TrimSpace(strings.TrimPrefix(text, prev))
+		}
+		if delta == "" {
+			continue
+		}
+		lastContent[msg.ID] = text
+
+		content := fmt.Sprintf("[%s] %s", subagentName, delta)
+		_, _ = c.messages.Create(ctx, parentSessionID, message.CreateMessageParams{
+			Role: message.Tool,
+			Parts: []message.ContentPart{
+				message.ToolResult{
+					ToolCallID: toolCallID,
+					Name:       SubAgentToolName,
+					Content:    content,
+				},
+			},
+		})
+	}
 }
