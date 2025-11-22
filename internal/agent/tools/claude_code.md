@@ -5,6 +5,7 @@ The `claude_code` tool provides headless access to Claude Code, Anthropic's AI c
 ## Capabilities
 
 Claude Code can:
+
 - Write, edit, and analyze code in multiple programming languages
 - Execute shell commands and manage processes
 - Navigate and manipulate filesystems
@@ -27,6 +28,7 @@ Claude Code can:
 ## Examples
 
 ### Basic Code Generation
+
 ```json
 {
   "query": "Create a Go HTTP server with basic routing and middleware",
@@ -35,6 +37,7 @@ Claude Code can:
 ```
 
 ### Complex Development Task
+
 ```json
 {
   "query": "Set up a complete React TypeScript project with testing, linting, and build configuration",
@@ -45,6 +48,7 @@ Claude Code can:
 ```
 
 ### Resume Previous Session
+
 ```json
 {
   "query": "Add unit tests to the authentication module we created earlier",
@@ -53,6 +57,7 @@ Claude Code can:
 ```
 
 ### Restricted Tool Usage
+
 ```json
 {
   "query": "Analyze the codebase structure and create a documentation outline",
@@ -64,6 +69,7 @@ Claude Code can:
 ## Response Format
 
 The tool returns a JSON object containing:
+
 - `result`: The main output from Claude Code
 - `session_id`: Unique identifier for the session (useful for resuming)
 - `cost_usd`: Total cost of the session in USD
@@ -84,6 +90,7 @@ The tool returns a JSON object containing:
 ## Integration with Crush
 
 This tool seamlessly integrates Claude Code's capabilities with Crush's:
+
 - Permission system for security
 - Session management for tracking
 - Tool ecosystem for extensibility

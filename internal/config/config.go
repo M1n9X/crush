@@ -537,6 +537,7 @@ func (c *Config) recordRecentModel(modelType SelectedModelType, model SelectedMo
 func allToolNames() []string {
 	return []string{
 		"agent",
+		"subagent",
 		"bash",
 		"job_output",
 		"job_kill",

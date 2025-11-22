@@ -341,6 +341,16 @@ func (c *commandDialogCmp) defaultCommands() []Command {
 				return util.CmdHandler(SwitchModelMsg{})
 			},
 		},
+		{
+			ID:          "add_subagent",
+			Title:       "Add Subagent",
+			Description: "Create a new subagent definition",
+			Handler: func(cmd Command) tea.Cmd {
+				return util.CmdHandler(dialogs.OpenDialogMsg{
+					Model: NewAddSubAgentDialog(),
+				})
+			},
+		},
 	}
 
 	// Only show compact command if there's an active session

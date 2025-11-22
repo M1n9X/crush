@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/help"
@@ -740,6 +741,11 @@ func (p *chatPage) toggleDetails() {
 }
 
 func (p *chatPage) sendMessage(text string, attachments []message.Attachment) tea.Cmd {
+	trimmed := strings.TrimSpace(text)
+	if strings.HasPrefix(trimmed, "/") {
+		return p.handleSlashCommand(trimmed)
+	}
+
 	session := p.session
 	var cmds []tea.Cmd
 	if p.session.ID == "" {
@@ -770,6 +776,16 @@ func (p *chatPage) sendMessage(text string, attachments []message.Attachment) te
 		return nil
 	})
 	return tea.Batch(cmds...)
+}
+
+func (p *chatPage) handleSlashCommand(text string) tea.Cmd {
+	switch {
+	case strings.HasPrefix(text, "/agent"):
+		args := strings.TrimSpace(strings.TrimPrefix(text, "/agent"))
+		return commands.HandleSlashAgent(args)
+	default:
+		return util.ReportWarn(fmt.Sprintf("Unknown command: %s", text))
+	}
 }
 
 func (p *chatPage) Bindings() []key.Binding {

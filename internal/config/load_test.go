@@ -489,6 +489,7 @@ func TestConfig_setupAgentsWithDisabledTools(t *testing.T) {
 
 	assert.Equal(t, []string{
 		"agent",
+		"subagent",
 		"bash",
 		"job_output",
 		"job_kill",
@@ -537,6 +538,7 @@ func TestConfig_setupAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, []string{
 		"agent",
+		"subagent",
 		"bash",
 		"job_output",
 		"job_kill",
