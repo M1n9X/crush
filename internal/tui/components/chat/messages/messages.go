@@ -32,6 +32,10 @@ var CopyKey = key.NewBinding(key.WithKeys("c", "y", "C", "Y"), key.WithHelp("c/y
 // ClearSelectionKey is the key binding for clearing the current selection in the chat interface.
 var ClearSelectionKey = key.NewBinding(key.WithKeys("esc", "alt+esc"), key.WithHelp("esc", "clear selection"))
 
+// ToggleSubAgentLogKey toggles full log display for subagent tool calls.
+// Use ctrl+r (and ctrl+shift+r as an alternative) to avoid clashing with editor shortcuts.
+var ToggleSubAgentLogKey = key.NewBinding(key.WithKeys("ctrl+r", "ctrl+shift+r"), key.WithHelp("ctrl+r", "toggle subagent log"))
+
 // MessageCmp defines the interface for message components in the chat interface.
 // It combines standard UI model interfaces with message-specific functionality.
 type MessageCmp interface {

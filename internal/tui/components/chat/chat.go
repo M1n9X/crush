@@ -403,6 +403,9 @@ func (m *messageListCmp) handleToolMessage(msg message.Message) tea.Cmd {
 	for _, tr := range msg.ToolResults() {
 		if toolCallIndex := m.findToolCallByID(items, tr.ToolCallID); toolCallIndex != NotFound {
 			toolCall := items[toolCallIndex].(messages.ToolCallCmp)
+			if existing := toolCall.GetToolResult(); tr.Name == agent.SubAgentToolName {
+				tr = mergeSubAgentToolResult(existing, tr)
+			}
 			toolCall.SetToolResult(tr)
 			m.listCmp.UpdateItem(toolCall.ID(), toolCall)
 		}
@@ -592,10 +595,69 @@ func (m *messageListCmp) buildToolResultMap(messages []message.Message) map[stri
 	toolResultMap := make(map[string]message.ToolResult)
 	for _, msg := range messages {
 		for _, tr := range msg.ToolResults() {
+			if existing, ok := toolResultMap[tr.ToolCallID]; ok && tr.Name == agent.SubAgentToolName {
+				tr = mergeSubAgentToolResult(existing, tr)
+			}
 			toolResultMap[tr.ToolCallID] = tr
 		}
 	}
 	return toolResultMap
+}
+
+func mergeSubAgentToolResult(existing, incoming message.ToolResult) message.ToolResult {
+	incoming.Content = mergeSubAgentContent(existing.Content, incoming.Content)
+	if incoming.Metadata == "" {
+		incoming.Metadata = existing.Metadata
+	}
+	incoming.IsError = incoming.IsError || existing.IsError
+	return incoming
+}
+
+func mergeSubAgentContent(existing, incoming string) string {
+	if existing != "" && incoming != "" &&
+		!strings.HasSuffix(existing, "\n") &&
+		!strings.HasSuffix(existing, " ") &&
+		!strings.HasPrefix(incoming, "\n") &&
+		!strings.HasPrefix(incoming, " ") &&
+		asciiBoundary(existing, incoming) {
+		incoming = " " + incoming
+	}
+	switch {
+	case existing == "":
+		return incoming
+	case incoming == "":
+		return existing
+	default:
+		return existing + incoming
+	}
+}
+
+func asciiBoundary(existing, incoming string) bool {
+	last := lastRune(existing)
+	first := firstRune(incoming)
+	if last == 0 || first == 0 {
+		return false
+	}
+	return isASCIIAlphaNum(last) && isASCIIAlphaNum(first)
+}
+
+func lastRune(s string) rune {
+	var last rune
+	for _, r := range s {
+		last = r
+	}
+	return last
+}
+
+func firstRune(s string) rune {
+	for _, r := range s {
+		return r
+	}
+	return 0
+}
+
+func isASCIIAlphaNum(r rune) bool {
+	return r < 128 && ((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9'))
 }
 
 // convertMessagesToUI converts database messages to UI components.

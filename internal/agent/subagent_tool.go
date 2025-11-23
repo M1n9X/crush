@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -307,6 +308,7 @@ func sortedModelTypes(models map[config.SelectedModelType]config.SelectedModel) 
 func (c *coordinator) forwardSubAgentLogs(ctx context.Context, subSessionID, parentSessionID, toolCallID, subagentName string) {
 	events := c.messages.Subscribe(ctx)
 	lastContent := make(map[string]string)
+	metadata := encodeSubAgentLogMetadata(subagentName)
 
 	for event := range events {
 		if event.Type != pubsub.CreatedEvent && event.Type != pubsub.UpdatedEvent {
@@ -319,38 +321,53 @@ func (c *coordinator) forwardSubAgentLogs(ctx context.Context, subSessionID, par
 		var text string
 		switch msg.Role {
 		case message.Assistant:
-			text = strings.TrimSpace(msg.Content().Text)
+			text = strings.ReplaceAll(msg.Content().Text, "\r\n", "\n")
 		case message.Tool:
 			if results := msg.ToolResults(); len(results) > 0 {
-				text = strings.TrimSpace(results[0].Content)
+				text = strings.ReplaceAll(results[0].Content, "\r\n", "\n")
 			}
 		default:
 			continue
 		}
-		if text == "" {
+		if strings.TrimSpace(text) == "" {
 			continue
 		}
 
 		prev := lastContent[msg.ID]
 		delta := text
 		if strings.HasPrefix(text, prev) {
-			delta = strings.TrimSpace(strings.TrimPrefix(text, prev))
+			delta = strings.TrimPrefix(text, prev)
 		}
 		if delta == "" {
 			continue
 		}
 		lastContent[msg.ID] = text
 
-		content := fmt.Sprintf("[%s] %s", subagentName, delta)
 		_, _ = c.messages.Create(ctx, parentSessionID, message.CreateMessageParams{
 			Role: message.Tool,
 			Parts: []message.ContentPart{
 				message.ToolResult{
 					ToolCallID: toolCallID,
 					Name:       SubAgentToolName,
-					Content:    content,
+					Content:    delta,
+					Metadata:   metadata,
 				},
 			},
 		})
 	}
+}
+
+type subAgentLogMetadata struct {
+	SubagentName string `json:"subagent_name"`
+}
+
+func encodeSubAgentLogMetadata(name string) string {
+	if name == "" {
+		return ""
+	}
+	raw, err := json.Marshal(subAgentLogMetadata{SubagentName: name})
+	if err != nil {
+		return ""
+	}
+	return string(raw)
 }

@@ -65,6 +65,7 @@ type toolCallCmp struct {
 	anim     util.Model // Animation component for pending states
 
 	nestedToolCalls []ToolCallCmp // Nested tool calls for hierarchical display
+	expanded        bool          // Whether full output is shown (used for verbose tools)
 }
 
 // ToolCallOption provides functional options for configuring tool call components
@@ -165,6 +166,10 @@ func (m *toolCallCmp) Update(msg tea.Msg) (util.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 	case tea.KeyPressMsg:
+		if key.Matches(msg, ToggleSubAgentLogKey) && m.call.Name == agent.SubAgentToolName {
+			m.expanded = !m.expanded
+			return m, nil
+		}
 		if key.Matches(msg, CopyKey) {
 			return m, m.copyTool()
 		}

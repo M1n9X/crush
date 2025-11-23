@@ -660,6 +660,10 @@ func (a *sessionAgent) preparePrompt(msgs []message.Message, attachments ...mess
 		if len(m.Parts) == 0 {
 			continue
 		}
+		// Skip subagent log plumbing so main agent context stays clean.
+		if isSubAgentLog(m) {
+			continue
+		}
 		// Assistant message without content or tool calls (cancelled before it
 		// returned anything).
 		if m.Role == message.Assistant && len(m.ToolCalls()) == 0 && m.Content().Text == "" && m.ReasoningContent().String() == "" {
@@ -678,6 +682,18 @@ func (a *sessionAgent) preparePrompt(msgs []message.Message, attachments ...mess
 	}
 
 	return history, files
+}
+
+func isSubAgentLog(m message.Message) bool {
+	if m.Role != message.Tool {
+		return false
+	}
+	for _, tr := range m.ToolResults() {
+		if tr.Name == SubAgentToolName {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *sessionAgent) getSessionMessages(ctx context.Context, session session.Session) ([]message.Message, error) {

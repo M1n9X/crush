@@ -21,6 +21,7 @@ import (
 
 // responseContextHeight limits the number of lines displayed in tool output
 const responseContextHeight = 10
+const subAgentPreviewLines = 24
 
 // renderer defines the interface for tool-specific rendering implementations
 type renderer interface {
@@ -180,6 +181,7 @@ func init() {
 	registry.register(tools.SourcegraphToolName, func() renderer { return sourcegraphRenderer{} })
 	registry.register(tools.DiagnosticsToolName, func() renderer { return diagnosticsRenderer{} })
 	registry.register(agent.AgentToolName, func() renderer { return agentRenderer{} })
+	registry.register(agent.SubAgentToolName, func() renderer { return subAgentRenderer{} })
 }
 
 // -----------------------------------------------------------------------------
@@ -1077,6 +1079,85 @@ func renderMarkdownContent(v *toolCallCmp, content string) string {
 	}
 
 	return style.Render(strings.Join(out, "\n"))
+}
+
+type subAgentRenderer struct {
+	baseRenderer
+}
+
+func (sr subAgentRenderer) Render(v *toolCallCmp) string {
+	name := prettifyToolName("Subagent")
+	if metaName := parseSubAgentName(v.result.Metadata); metaName != "" {
+		name = fmt.Sprintf("Subagent %s", metaName)
+	}
+
+	header := sr.makeHeader(v, name, v.textWidth())
+	if res, done := earlyState(header, v); done {
+		return res
+	}
+
+	body := renderSubAgentContent(v, v.result.Content)
+	return joinHeaderBody(header, body)
+}
+
+func parseSubAgentName(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	var meta struct {
+		SubagentName string `json:"subagent_name"`
+	}
+	if err := json.Unmarshal([]byte(raw), &meta); err != nil {
+		return ""
+	}
+	return meta.SubagentName
+}
+
+func renderSubAgentContent(v *toolCallCmp, content string) string {
+	t := styles.CurrentTheme()
+	content = strings.ReplaceAll(content, "\r\n", "\n") // Normalize line endings
+	content = strings.ReplaceAll(content, "\t", "    ") // Replace tabs with spaces
+
+	width := v.textWidth() - 2
+	if width < 10 {
+		width = 10
+	}
+
+	var (
+		out       []string
+		hidden    int
+		lineLimit = subAgentPreviewLines
+	)
+	lines := strings.Split(content, "\n")
+	for _, ln := range lines {
+		ln = ansiext.Escape(ln)
+		ln = " " + ln
+
+		wrapped := lipgloss.Wrap(ln, width, " ")
+		for _, wrappedLine := range strings.Split(wrapped, "\n") {
+			if !v.expanded && len(out) >= lineLimit {
+				hidden++
+				continue
+			}
+			out = append(out, t.S().Muted.
+				Width(width).
+				Background(t.BgBaseLighter).
+				Render(wrappedLine))
+		}
+	}
+
+	if !v.expanded && hidden > 0 {
+		out = append(out, t.S().Muted.
+			Background(t.BgBaseLighter).
+			Width(width).
+			Render(fmt.Sprintf("… (%d more lines, ctrl+r to expand)", hidden)))
+	} else if v.expanded {
+		out = append(out, t.S().Subtle.
+			Width(width).
+			Render("ctrl+r to collapse"))
+	}
+
+	return strings.Join(out, "\n")
 }
 
 func getDigits(n int) int {
