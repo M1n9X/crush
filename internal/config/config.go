@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -197,7 +198,10 @@ type Options struct {
 	Debug                     bool         `json:"debug,omitempty" jsonschema:"description=Enable debug logging,default=false"`
 	DebugLSP                  bool         `json:"debug_lsp,omitempty" jsonschema:"description=Enable debug logging for LSP servers,default=false"`
 	DisableAutoSummarize      bool         `json:"disable_auto_summarize,omitempty" jsonschema:"description=Disable automatic conversation summarization,default=false"`
+	DisableThinkingControls   bool         `json:"disable_thinking_controls,omitempty" jsonschema:"description=Disable keyword-based thinking/reasoning overrides,default=false"`
 	DataDirectory             string       `json:"data_directory,omitempty" jsonschema:"description=Directory for storing application data (relative to working directory),default=.crush,example=.crush"` // Relative to the cwd
+	ToolsManifest             string       `json:"tools_manifest,omitempty" jsonschema:"description=Path to a tools manifest (JSON) declaring capability descriptors,example=.crush/tools.json"`
+	PluginsManifest           string       `json:"plugins_manifest,omitempty" jsonschema:"description=Path to a plugins manifest (JSON) declaring plugin descriptors"`
 	DisabledTools             []string     `json:"disabled_tools" jsonschema:"description=Tools to disable"`
 	DisableProviderAutoUpdate bool         `json:"disable_provider_auto_update,omitempty" jsonschema:"description=Disable providers auto-update,default=false"`
 	Attribution               *Attribution `json:"attribution,omitempty" jsonschema:"description=Attribution settings for generated content"`
@@ -330,6 +334,7 @@ type Config struct {
 
 	// Internal
 	workingDir string `json:"-"`
+	configDir  string `json:"-"`
 	// TODO: find a better way to do this this should probably not be part of the config
 	resolver       VariableResolver
 	dataConfigDir  string             `json:"-"`
@@ -337,6 +342,13 @@ type Config struct {
 }
 
 func (c *Config) WorkingDir() string {
+	return c.workingDir
+}
+
+func (c *Config) ConfigDir() string {
+	if c.configDir != "" {
+		return c.configDir
+	}
 	return c.workingDir
 }
 
@@ -442,8 +454,8 @@ func (c *Config) SetConfigField(key string, value any) error {
 	if err != nil {
 		return fmt.Errorf("failed to set config field %s: %w", key, err)
 	}
-	if err := os.WriteFile(c.dataConfigDir, []byte(newValue), 0o600); err != nil {
-		return fmt.Errorf("failed to write config file: %w", err)
+	if err := writeConfigWithBackup(c.dataConfigDir, []byte(newValue), data); err != nil {
+		return err
 	}
 	return nil
 }
@@ -492,6 +504,23 @@ func (c *Config) SetProviderAPIKey(providerID, apiKey string) error {
 }
 
 const maxRecentModelsPerType = 5
+
+func writeConfigWithBackup(path string, contents []byte, previous []byte) error {
+	if path == "" {
+		return fmt.Errorf("config path is empty")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("failed to ensure config directory: %w", err)
+	}
+	if len(previous) > 0 {
+		backupPath := path + ".backup"
+		_ = os.WriteFile(backupPath, previous, 0o600)
+	}
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+	return nil
+}
 
 func (c *Config) recordRecentModel(modelType SelectedModelType, model SelectedModel) error {
 	if model.Provider == "" || model.Model == "" {

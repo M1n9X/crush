@@ -10,6 +10,8 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,19 +19,24 @@ import (
 	"charm.land/fantasy"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/crush/internal/agent"
+	"github.com/charmbracelet/crush/internal/agent/capability"
 	"github.com/charmbracelet/crush/internal/agent/tools/mcp"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/db"
 	"github.com/charmbracelet/crush/internal/format"
+	"github.com/charmbracelet/crush/internal/freshness"
 	"github.com/charmbracelet/crush/internal/history"
 	"github.com/charmbracelet/crush/internal/log"
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/crush/internal/plugin"
 	"github.com/charmbracelet/crush/internal/pubsub"
+	"github.com/charmbracelet/crush/internal/runtime"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/shell"
+	"github.com/charmbracelet/crush/internal/telemetry"
 	"github.com/charmbracelet/crush/internal/term"
 	"github.com/charmbracelet/crush/internal/tui/components/anim"
 	"github.com/charmbracelet/crush/internal/tui/styles"
@@ -47,9 +54,15 @@ type App struct {
 
 	AgentCoordinator agent.Coordinator
 
+	Telemetry   *telemetry.Recorder
+	Freshness   *freshness.Service
+	Plugins     *plugin.Host
+	CapRegistry *capability.Registry
+
 	LSPClients *csync.Map[string, *lsp.Client]
 
-	config *config.Config
+	config     *config.Config
+	registrars []runtime.Registrar
 
 	serviceEventsWG *sync.WaitGroup
 	eventsCtx       context.Context
@@ -72,12 +85,33 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 	if cfg.Permissions != nil && cfg.Permissions.AllowedTools != nil {
 		allowedTools = cfg.Permissions.AllowedTools
 	}
+	telemetryRecorder := telemetry.NewRecorder()
+	fresh := freshness.New()
+	freshnessPath := filepath.Join(cfg.Options.DataDirectory, "freshness.json")
+	_ = fresh.Load(freshnessPath)
+	pluginHost := plugin.NewHost(plugin.PersistentPath(cfg.Options.DataDirectory, cfg.WorkingDir()), cfg.WorkingDir())
+	capRegistry := capability.NewRegistry()
+	appRegistrars := runtime.DefaultRegistrarsV2()
+	if path := cfg.Options.ToolsManifest; path != "" {
+		appRegistrars.Tools = append([]runtime.Registrar{runtime.ToolsManifestRegistrar{Path: path}}, appRegistrars.Tools...)
+	} else if manifest := runtime.ResolveToolsManifest(cfg.ConfigDir()); manifest != "" {
+		appRegistrars.Tools = append([]runtime.Registrar{runtime.ToolsManifestRegistrar{Path: manifest}}, appRegistrars.Tools...)
+	}
+	if path := cfg.Options.PluginsManifest; path != "" {
+		appRegistrars.Plugins = append([]runtime.Registrar{runtime.PluginRegistryRegistrar{Path: path}}, appRegistrars.Plugins...)
+	} else if manifest := runtime.ResolvePluginsManifest(cfg.ConfigDir()); manifest != "" {
+		appRegistrars.Plugins = append([]runtime.Registrar{runtime.PluginRegistryRegistrar{Path: manifest}}, appRegistrars.Plugins...)
+	}
 
 	app := &App{
 		Sessions:    sessions,
 		Messages:    messages,
 		History:     files,
-		Permissions: permission.NewPermissionService(cfg.WorkingDir(), skipPermissionsRequests, allowedTools),
+		Permissions: permission.NewPermissionService(cfg.WorkingDir(), cfg.Options.DataDirectory, skipPermissionsRequests, allowedTools),
+		Telemetry:   telemetryRecorder,
+		Freshness:   fresh,
+		Plugins:     pluginHost,
+		CapRegistry: capRegistry,
 		LSPClients:  csync.NewMap[string, *lsp.Client](),
 
 		globalCtx: ctx,
@@ -87,6 +121,7 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 		events:          make(chan tea.Msg, 100),
 		serviceEventsWG: &sync.WaitGroup{},
 		tuiWG:           &sync.WaitGroup{},
+		registrars:      appRegistrars.Flatten(),
 	}
 
 	app.setupEvents()
@@ -97,13 +132,69 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 	// Check for updates in the background.
 	go app.checkForUpdates(ctx)
 
+	// Feed freshness with history events.
 	go func() {
-		slog.Info("Initializing MCP clients")
-		mcp.Initialize(ctx, app.Permissions, cfg)
+		sub := files.Subscribe(ctx)
+		for evt := range sub {
+			if evt.Payload.Path != "" {
+				app.Freshness.Record(evt.Payload.SessionID, evt.Payload.Path)
+			}
+		}
 	}()
 
+	// Seed freshness with configured context paths.
+	for _, p := range cfg.Options.ContextPaths {
+		app.Freshness.RecordWorkspace(p)
+	}
+	if cfg.Options.InitializeAs != "" {
+		agentsPath := filepath.Join(cfg.WorkingDir(), cfg.Options.InitializeAs)
+		if _, err := os.Stat(agentsPath); err == nil {
+			app.Freshness.RecordWorkspace(agentsPath)
+		}
+	}
+	// Scan .crush for markdown metadata.
+	if info, err := os.ReadDir(filepath.Join(cfg.WorkingDir(), ".crush")); err == nil {
+		for _, entry := range info {
+			if entry.IsDir() {
+				continue
+			}
+			if strings.HasSuffix(entry.Name(), ".md") {
+				app.Freshness.RecordWorkspace(filepath.Join(cfg.WorkingDir(), ".crush", entry.Name()))
+			}
+		}
+	}
+	// Scan for AGENTS-like files and seed freshness.
+	for _, candidate := range []string{"AGENTS.md", "CRUSH.md", "CLAUDE.md"} {
+		path := filepath.Join(cfg.WorkingDir(), candidate)
+		if _, err := os.Stat(path); err == nil {
+			app.Freshness.RecordWorkspace(path)
+		}
+	}
+
+	// Run registrars after core services are ready.
+	regErr := runtime.RunRegistrars(ctx, app.registrars, runtime.Services{
+		Config:        cfg,
+		ConfigPaths:   runtime.DefaultConfigPaths(cfg.WorkingDir()),
+		Permissions:   app.Permissions,
+		Telemetry:     telemetryRecorder,
+		Freshness:     fresh,
+		PluginHost:    pluginHost,
+		ToolsRegistry: capRegistry,
+		WorkingDir:    cfg.WorkingDir(),
+		ConfigDir:     cfg.ConfigDir(),
+		MCPInit: func(ctx context.Context) {
+			slog.Info("Initializing MCP clients")
+			mcp.Initialize(ctx, app.Permissions, cfg)
+		},
+	})
+	if regErr != nil {
+		return nil, regErr
+	}
+
 	// cleanup database upon app shutdown
-	app.cleanupFuncs = append(app.cleanupFuncs, conn.Close, mcp.Close)
+	app.cleanupFuncs = append(app.cleanupFuncs, conn.Close, mcp.Close, func() error {
+		return fresh.Save(freshnessPath)
+	})
 
 	// TODO: remove the concept of agent config, most likely.
 	if !cfg.IsConfigured() {
@@ -273,6 +364,7 @@ func (app *App) setupEvents() {
 	setupSubscriber(ctx, app.serviceEventsWG, "history", app.History.Subscribe, app.events)
 	setupSubscriber(ctx, app.serviceEventsWG, "mcp", mcp.SubscribeEvents, app.events)
 	setupSubscriber(ctx, app.serviceEventsWG, "lsp", SubscribeLSPEvents, app.events)
+	setupSubscriber(ctx, app.serviceEventsWG, "telemetry", app.Telemetry.Subscribe, app.events)
 	cleanupFunc := func() error {
 		cancel()
 		app.serviceEventsWG.Wait()
@@ -327,6 +419,9 @@ func (app *App) InitCoderAgent(ctx context.Context) error {
 		app.Messages,
 		app.Permissions,
 		app.History,
+		app.Telemetry,
+		app.Freshness,
+		app.CapRegistry,
 		app.LSPClients,
 	)
 	if err != nil {

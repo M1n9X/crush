@@ -2,7 +2,10 @@ package permission
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -52,6 +55,8 @@ type Service interface {
 	SetSkipRequests(skip bool)
 	SkipRequests() bool
 	SubscribeNotifications(ctx context.Context) <-chan pubsub.Event[PermissionNotification]
+	Persistent() []PermissionRequest
+	ClearPersistent() error
 }
 
 type permissionService struct {
@@ -66,6 +71,9 @@ type permissionService struct {
 	autoApproveSessionsMu sync.RWMutex
 	skip                  bool
 	allowedTools          []string
+	persistentPermissions []PermissionRequest
+	persistentPath        string
+	persistentMu          sync.RWMutex
 
 	// used to make sure we only process one request at a time
 	requestMu     sync.Mutex
@@ -89,6 +97,13 @@ func (s *permissionService) GrantPersistent(permission PermissionRequest) {
 	if s.activeRequest != nil && s.activeRequest.ID == permission.ID {
 		s.activeRequest = nil
 	}
+
+	// Persist on disk for the current workspace so approvals survive restarts.
+	permission.SessionID = "*" // wildcard to apply across sessions for this project
+	s.persistentMu.Lock()
+	s.persistentPermissions = append(s.persistentPermissions, permission)
+	s.persistLocked()
+	s.persistentMu.Unlock()
 }
 
 func (s *permissionService) Grant(permission PermissionRequest) {
@@ -181,14 +196,16 @@ func (s *permissionService) Request(opts CreatePermissionRequest) bool {
 	}
 	s.sessionPermissionsMu.RUnlock()
 
-	s.sessionPermissionsMu.RLock()
-	for _, p := range s.sessionPermissions {
-		if p.ToolName == permission.ToolName && p.Action == permission.Action && p.SessionID == permission.SessionID && p.Path == permission.Path {
-			s.sessionPermissionsMu.RUnlock()
-			return true
+	s.persistentMu.RLock()
+	for _, p := range s.persistentPermissions {
+		if p.ToolName == permission.ToolName && p.Action == permission.Action && p.Path == permission.Path {
+			if p.SessionID == "*" || p.SessionID == permission.SessionID {
+				s.persistentMu.RUnlock()
+				return true
+			}
 		}
 	}
-	s.sessionPermissionsMu.RUnlock()
+	s.persistentMu.RUnlock()
 
 	s.activeRequest = &permission
 
@@ -220,8 +237,26 @@ func (s *permissionService) SkipRequests() bool {
 	return s.skip
 }
 
-func NewPermissionService(workingDir string, skip bool, allowedTools []string) Service {
-	return &permissionService{
+func (s *permissionService) Persistent() []PermissionRequest {
+	s.persistentMu.RLock()
+	defer s.persistentMu.RUnlock()
+	out := make([]PermissionRequest, len(s.persistentPermissions))
+	copy(out, s.persistentPermissions)
+	return out
+}
+
+func (s *permissionService) ClearPersistent() error {
+	s.persistentMu.Lock()
+	defer s.persistentMu.Unlock()
+	s.persistentPermissions = nil
+	if s.persistentPath == "" {
+		return nil
+	}
+	return os.Remove(s.persistentPath)
+}
+
+func NewPermissionService(workingDir, dataDir string, skip bool, allowedTools []string) Service {
+	service := &permissionService{
 		Broker:              pubsub.NewBroker[PermissionRequest](),
 		notificationBroker:  pubsub.NewBroker[PermissionNotification](),
 		workingDir:          workingDir,
@@ -229,6 +264,81 @@ func NewPermissionService(workingDir string, skip bool, allowedTools []string) S
 		autoApproveSessions: make(map[string]bool),
 		skip:                skip,
 		allowedTools:        allowedTools,
+		persistentPath:      buildPersistentPath(dataDir, workingDir),
 		pendingRequests:     csync.NewMap[string, chan bool](),
 	}
+	service.loadPersistent()
+	return service
+}
+
+func buildPersistentPath(dataDir, workingDir string) string {
+	return PersistentPath(dataDir, workingDir)
+}
+
+// PersistentPath exposes the resolved path for a workspace permission store.
+func PersistentPath(dataDir, workingDir string) string {
+	if dataDir == "" {
+		return ""
+	}
+	sum := sha1.Sum([]byte(workingDir))
+	filename := fmt.Sprintf("%x.json", sum)
+	return filepath.Join(dataDir, "permissions", filename)
+}
+
+func (s *permissionService) persistLocked() {
+	if s.persistentPath == "" {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(s.persistentPath), 0o755); err != nil {
+		return
+	}
+	data, err := json.MarshalIndent(s.persistentPermissions, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(s.persistentPath, data, 0o600)
+}
+
+func (s *permissionService) loadPersistent() {
+	if s.persistentPath == "" {
+		return
+	}
+	perms, err := LoadPersistent(s.persistentPath)
+	if err != nil {
+		return
+	}
+	s.persistentPermissions = perms
+}
+
+// LoadPersistent reads a permission store file.
+func LoadPersistent(path string) ([]PermissionRequest, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var perms []PermissionRequest
+	if err := json.Unmarshal(data, &perms); err != nil {
+		return nil, err
+	}
+	for i := range perms {
+		if perms[i].SessionID == "" {
+			perms[i].SessionID = "*"
+		}
+	}
+	return perms, nil
+}
+
+// SavePersistent writes permission entries to the given path, ensuring directories exist.
+func SavePersistent(path string, perms []PermissionRequest) error {
+	if path == "" {
+		return fmt.Errorf("permission store path is empty")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(perms, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
 }

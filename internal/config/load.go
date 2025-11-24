@@ -10,11 +10,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"slices"
 	"strconv"
 	"strings"
 
+	jsonrepair "github.com/RealAlexandreAI/json-repair"
 	"github.com/charmbracelet/catwalk/pkg/catwalk"
 	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/env"
@@ -34,9 +36,29 @@ func LoadReader(fd io.Reader) (*Config, error) {
 	}
 
 	var config Config
-	err = json.Unmarshal(data, &config)
+	decoded := data
+	err = json.Unmarshal(decoded, &config)
 	if err != nil {
+		repaired, repErr := jsonrepair.RepairJSON(string(data))
+		if repErr == nil {
+			if err2 := json.Unmarshal([]byte(repaired), &config); err2 == nil {
+				slog.Warn("Loaded configuration after automatic JSON repair", "error", err)
+				decoded = []byte(repaired)
+				return &config, nil
+			}
+		}
 		return nil, err
+	}
+
+	// Prune unknown top-level keys to align with schema without breaking load.
+	if sanitized, removed := sanitizeTopLevelKeys(decoded); len(removed) > 0 {
+		var sanitizedCfg Config
+		if err := json.Unmarshal(sanitized, &sanitizedCfg); err == nil {
+			slog.Warn("Pruned unknown top-level config keys", "keys", removed)
+			config = sanitizedCfg
+		} else {
+			slog.Warn("Failed to apply pruned config, keeping original", "error", err)
+		}
 	}
 	return &config, err
 }
@@ -305,6 +327,7 @@ func (c *Config) configureProviders(env env.Env, resolver VariableResolver, know
 
 func (c *Config) setDefaults(workingDir, dataDir string) {
 	c.workingDir = workingDir
+	c.configDir = workingDir
 	if c.Options == nil {
 		c.Options = &Options{}
 	}
@@ -322,6 +345,13 @@ func (c *Config) setDefaults(workingDir, dataDir string) {
 		} else {
 			c.Options.DataDirectory = filepath.Join(workingDir, defaultDataDirectory)
 		}
+	}
+	// Normalize manifest paths relative to working dir if not absolute.
+	if c.Options.ToolsManifest != "" && !filepath.IsAbs(c.Options.ToolsManifest) {
+		c.Options.ToolsManifest = filepath.Join(workingDir, c.Options.ToolsManifest)
+	}
+	if c.Options.PluginsManifest != "" && !filepath.IsAbs(c.Options.PluginsManifest) {
+		c.Options.PluginsManifest = filepath.Join(workingDir, c.Options.PluginsManifest)
 	}
 	if c.Providers == nil {
 		c.Providers = csync.NewMap[string, ProviderConfig]()
@@ -621,7 +651,32 @@ func loadFromConfigPaths(configPaths []string) (*Config, error) {
 		configs = append(configs, fd)
 	}
 
-	return loadFromReaders(configs)
+	cfg, err := loadFromReaders(configs)
+	if err == nil {
+		return cfg, nil
+	}
+
+	slog.Warn("Failed to load config, trying backup copies", "error", err)
+
+	var backups []io.Reader
+	for _, path := range configPaths {
+		backupPath := path + ".backup"
+		fd, openErr := os.Open(backupPath)
+		if openErr != nil {
+			continue
+		}
+		defer fd.Close()
+		backups = append(backups, fd)
+	}
+	if len(backups) == 0 {
+		return nil, err
+	}
+	backupCfg, backupErr := loadFromReaders(backups)
+	if backupErr != nil {
+		return nil, err
+	}
+	slog.Warn("Loaded configuration from backup after primary failure")
+	return backupCfg, nil
 }
 
 func loadFromReaders(readers []io.Reader) (*Config, error) {
@@ -630,11 +685,23 @@ func loadFromReaders(readers []io.Reader) (*Config, error) {
 	}
 
 	merged, err := Merge(readers)
-	if err != nil {
-		return nil, fmt.Errorf("failed to merge configuration readers: %w", err)
+	if err == nil {
+		return LoadReader(merged)
 	}
 
-	return LoadReader(merged)
+	slog.Warn("Failed to merge configs, attempting lenient load", "error", err)
+	// Try loading each reader individually, keeping the first successful one.
+	for _, r := range readers {
+		cfg, loadErr := LoadReader(r)
+		if loadErr == nil {
+			slog.Warn("Loaded config after lenient fallback")
+			return cfg, nil
+		}
+	}
+
+	// As a last resort, return an empty config to keep the app usable.
+	slog.Warn("All config readers failed, falling back to empty config")
+	return &Config{}, nil
 }
 
 func hasVertexCredentials(env env.Env) bool {
@@ -708,6 +775,46 @@ func assignIfNil[T any](ptr **T, val T) {
 	if *ptr == nil {
 		*ptr = &val
 	}
+}
+
+// sanitizeTopLevelKeys removes unknown top-level keys based on the Config struct.
+func sanitizeTopLevelKeys(data []byte) ([]byte, []string) {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		return data, nil
+	}
+
+	allowed := make(map[string]struct{})
+	cfgType := reflect.TypeOf(Config{})
+	for i := 0; i < cfgType.NumField(); i++ {
+		field := cfgType.Field(i)
+		tag := field.Tag.Get("json")
+		if tag == "-" {
+			continue
+		}
+		name := strings.Split(tag, ",")[0]
+		if name == "" {
+			name = field.Name
+		}
+		allowed[name] = struct{}{}
+	}
+
+	var removed []string
+	for k := range m {
+		if _, ok := allowed[k]; !ok {
+			delete(m, k)
+			removed = append(removed, k)
+		}
+	}
+	if len(removed) == 0 {
+		return data, nil
+	}
+	slices.Sort(removed)
+	encoded, err := json.Marshal(m)
+	if err != nil {
+		return data, nil
+	}
+	return encoded, removed
 }
 
 func isInsideWorktree() bool {

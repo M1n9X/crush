@@ -1,9 +1,11 @@
 package history
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/crush/internal/db"
@@ -52,7 +54,11 @@ func NewService(q *db.Queries, db *sql.DB) Service {
 }
 
 func (s *service) Create(ctx context.Context, sessionID, path, content string) (File, error) {
-	return s.createWithVersion(ctx, sessionID, path, content, InitialVersion)
+	file, err := s.createWithVersion(ctx, sessionID, path, content, InitialVersion)
+	if err == nil {
+		s.Publish(pubsub.UpdatedEvent, file)
+	}
+	return file, err
 }
 
 func (s *service) CreateVersion(ctx context.Context, sessionID, path, content string) (File, error) {
@@ -71,7 +77,11 @@ func (s *service) CreateVersion(ctx context.Context, sessionID, path, content st
 	latestFile := files[0] // Files are ordered by version DESC, created_at DESC
 	nextVersion := latestFile.Version + 1
 
-	return s.createWithVersion(ctx, sessionID, path, content, nextVersion)
+	file, err := s.createWithVersion(ctx, sessionID, path, content, nextVersion)
+	if err == nil {
+		s.Publish(pubsub.UpdatedEvent, file)
+	}
+	return file, err
 }
 
 func (s *service) createWithVersion(ctx context.Context, sessionID, path, content string, version int64) (File, error) {
@@ -163,10 +173,14 @@ func (s *service) ListLatestSessionFiles(ctx context.Context, sessionID string) 
 	if err != nil {
 		return nil, err
 	}
-	files := make([]File, len(dbFiles))
-	for i, dbFile := range dbFiles {
-		files[i] = s.fromDBItem(dbFile)
+	files := make([]File, 0, len(dbFiles))
+	for _, dbFile := range dbFiles {
+		files = append(files, s.fromDBItem(dbFile))
 	}
+	// Prefer most recently updated files first.
+	slices.SortFunc(files, func(a, b File) int {
+		return cmp.Compare(b.UpdatedAt, a.UpdatedAt)
+	})
 	return files, nil
 }
 

@@ -226,8 +226,15 @@ func (m *messageCmp) renderAssistantMessage() string {
 // message content and any attached files with appropriate icons.
 func (m *messageCmp) renderUserMessage() string {
 	t := styles.CurrentTheme()
+	content := m.message.Content().String()
+	isRecovered := strings.HasPrefix(strings.TrimSpace(m.message.Content().Text), "**Recovered File:**")
 	parts := []string{
-		m.toMarkdown(m.message.Content().String()),
+		m.toMarkdown(content),
+	}
+
+	if isRecovered {
+		badge := t.S().Base.Foreground(t.FgHalfMuted).Render("Recovered context")
+		parts = append([]string{badge}, parts...)
 	}
 
 	attachmentStyles := t.S().Text.

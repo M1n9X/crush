@@ -16,16 +16,19 @@ import (
 
 	"charm.land/fantasy"
 	"github.com/charmbracelet/catwalk/pkg/catwalk"
+	"github.com/charmbracelet/crush/internal/agent/capability"
 	"github.com/charmbracelet/crush/internal/agent/prompt"
 	"github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/csync"
+	"github.com/charmbracelet/crush/internal/freshness"
 	"github.com/charmbracelet/crush/internal/history"
 	"github.com/charmbracelet/crush/internal/log"
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/session"
+	"github.com/charmbracelet/crush/internal/telemetry"
 	"golang.org/x/sync/errgroup"
 
 	"charm.land/fantasy/providers/anthropic"
@@ -52,15 +55,19 @@ type Coordinator interface {
 	Summarize(context.Context, string) error
 	Model() Model
 	UpdateModels(ctx context.Context) error
+	Capabilities() []capability.Descriptor
 }
 
 type coordinator struct {
-	cfg         *config.Config
-	sessions    session.Service
-	messages    message.Service
-	permissions permission.Service
-	history     history.Service
-	lspClients  *csync.Map[string, *lsp.Client]
+	cfg          *config.Config
+	sessions     session.Service
+	messages     message.Service
+	permissions  permission.Service
+	history      history.Service
+	telemetry    *telemetry.Recorder
+	freshness    *freshness.Service
+	lspClients   *csync.Map[string, *lsp.Client]
+	capabilities *capability.Registry
 
 	agentWatcher *SubAgentWatcher
 
@@ -77,16 +84,25 @@ func NewCoordinator(
 	messages message.Service,
 	permissions permission.Service,
 	history history.Service,
+	telemetry *telemetry.Recorder,
+	freshness *freshness.Service,
+	registry *capability.Registry,
 	lspClients *csync.Map[string, *lsp.Client],
 ) (Coordinator, error) {
 	c := &coordinator{
-		cfg:         cfg,
-		sessions:    sessions,
-		messages:    messages,
-		permissions: permissions,
-		history:     history,
-		lspClients:  lspClients,
-		agents:      make(map[string]SessionAgent),
+		cfg:          cfg,
+		sessions:     sessions,
+		messages:     messages,
+		permissions:  permissions,
+		history:      history,
+		telemetry:    telemetry,
+		freshness:    freshness,
+		capabilities: registry,
+		lspClients:   lspClients,
+		agents:       make(map[string]SessionAgent),
+	}
+	if c.capabilities == nil {
+		c.capabilities = capability.NewRegistry()
 	}
 
 	// Initialize subagent watcher for hot reload
@@ -143,7 +159,7 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, 
 
 	mergedOptions, temp, topP, topK, freqPenalty, presPenalty := mergeCallOptions(model, providerCfg)
 
-	return c.currentAgent.Run(ctx, SessionAgentCall{
+	call := SessionAgentCall{
 		SessionID:        sessionID,
 		Prompt:           prompt,
 		Attachments:      attachments,
@@ -154,7 +170,11 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, 
 		TopK:             topK,
 		FrequencyPenalty: freqPenalty,
 		PresencePenalty:  presPenalty,
-	})
+	}
+
+	c.applyThinkingControls(&call, providerCfg.Type)
+
+	return c.currentAgent.Run(ctx, call)
 }
 
 func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.ProviderOptions {
@@ -287,6 +307,85 @@ func mergeCallOptions(model Model, cfg config.ProviderConfig) (fantasy.ProviderO
 	return modelOptions, temp, topP, topK, freqPenalty, presPenalty
 }
 
+func (c *coordinator) applyThinkingControls(call *SessionAgentCall, providerType catwalk.Type) {
+	if call == nil {
+		return
+	}
+	if c.cfg != nil && c.cfg.Options != nil && c.cfg.Options.DisableThinkingControls {
+		return
+	}
+	tokens := detectThinkingTokens(call.Prompt)
+	if tokens == 0 {
+		return
+	}
+	if tokens > call.MaxOutputTokens {
+		call.MaxOutputTokens = tokens
+	}
+	switch providerType {
+	case anthropic.Name:
+		existing, _ := call.ProviderOptions[anthropic.Name].(*anthropic.ProviderOptions)
+		if existing == nil {
+			existing = &anthropic.ProviderOptions{}
+		}
+		existing.Thinking = &anthropic.ThinkingProviderOption{BudgetTokens: tokens}
+		call.ProviderOptions[anthropic.Name] = existing
+	case openai.Name:
+		if opts, ok := call.ProviderOptions[openai.Name].(*openai.ProviderOptions); ok {
+			high := openai.ReasoningEffortHigh
+			opts.ReasoningEffort = &high
+		} else {
+			high := openai.ReasoningEffortHigh
+			call.ProviderOptions[openai.Name] = &openai.ProviderOptions{ReasoningEffort: &high}
+		}
+	case openrouter.Name:
+		enabled := true
+		effort := openrouter.ReasoningEffortHigh
+		call.ProviderOptions[openrouter.Name] = &openrouter.ProviderOptions{
+			Reasoning: &openrouter.ReasoningOptions{
+				Enabled: &enabled,
+				Effort:  &effort,
+			},
+		}
+	case openaicompat.Name:
+		high := openai.ReasoningEffortHigh
+		call.ProviderOptions[openaicompat.Name] = &openaicompat.ProviderOptions{
+			ReasoningEffort: &high,
+		}
+	case google.Name:
+		include := true
+		call.ProviderOptions[google.Name] = &google.ProviderOptions{
+			ThinkingConfig: &google.ThinkingConfig{
+				ThinkingBudget:  &tokens,
+				IncludeThoughts: &include,
+			},
+		}
+	}
+}
+
+func detectThinkingTokens(prompt string) int64 {
+	lower := strings.ToLower(prompt)
+	switch {
+	case strings.Contains(lower, "think harder"),
+		strings.Contains(lower, "think intensely"),
+		strings.Contains(lower, "think longer"),
+		strings.Contains(lower, "think really hard"),
+		strings.Contains(lower, "think super hard"),
+		strings.Contains(lower, "think very hard"),
+		strings.Contains(lower, "ultrathink"):
+		return 32_000
+	case strings.Contains(lower, "think about it"),
+		strings.Contains(lower, "think a lot"),
+		strings.Contains(lower, "think hard"),
+		strings.Contains(lower, "think more"),
+		strings.Contains(lower, "megathink"):
+		return 10_000
+	case strings.Contains(lower, "think"):
+		return 4_000
+	default:
+		return 0
+	}
+}
+
 func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, agent config.Agent) (SessionAgent, error) {
 	large, small, err := c.buildAgentModels(ctx, agent.Model)
 	if err != nil {
@@ -300,15 +399,19 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 
 	largeProviderCfg, _ := c.cfg.Providers.Get(large.ModelCfg.Provider)
 	result := NewSessionAgent(SessionAgentOptions{
-		large,
-		small,
-		largeProviderCfg.SystemPromptPrefix,
-		systemPrompt,
-		c.cfg.Options.DisableAutoSummarize,
-		c.permissions.SkipRequests(),
-		c.sessions,
-		c.messages,
-		nil,
+		LargeModel:           large,
+		SmallModel:           small,
+		SystemPromptPrefix:   largeProviderCfg.SystemPromptPrefix,
+		SystemPrompt:         systemPrompt,
+		DisableAutoSummarize: c.cfg.Options.DisableAutoSummarize,
+		IsYolo:               c.permissions.SkipRequests(),
+		Sessions:             c.sessions,
+		Messages:             c.messages,
+		Tools:                nil,
+		History:              c.history,
+		WorkingDir:           c.cfg.WorkingDir(),
+		Telemetry:            c.telemetry,
+		Freshness:            c.freshness,
 	})
 	c.readyWg.Go(func() error {
 		tools, err := c.buildTools(ctx, agent)
@@ -389,8 +492,16 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 	}
 
 	var filteredTools []fantasy.AgentTool
+	disabled := make(map[string]struct{})
+	for _, t := range c.cfg.Options.DisabledTools {
+		disabled[t] = struct{}{}
+	}
 	for _, tool := range allTools {
-		if slices.Contains(agent.AllowedTools, tool.Info().Name) {
+		name := tool.Info().Name
+		if _, off := disabled[name]; off {
+			continue
+		}
+		if slices.Contains(agent.AllowedTools, name) {
 			filteredTools = append(filteredTools, tool)
 		}
 	}
@@ -420,7 +531,21 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 	slices.SortFunc(filteredTools, func(a, b fantasy.AgentTool) int {
 		return strings.Compare(a.Info().Name, b.Info().Name)
 	})
+	for _, tool := range filteredTools {
+		c.registerCapability(tool)
+	}
 	return filteredTools, nil
+}
+
+func (c *coordinator) registerCapability(tool fantasy.AgentTool) {
+	if c.capabilities == nil || tool == nil {
+		return
+	}
+	info := tool.Info()
+	c.capabilities.Register(capability.Descriptor{
+		ID:          info.Name,
+		Description: info.Description,
+	})
 }
 
 func (c *coordinator) buildAgentModels(ctx context.Context, primaryModelType config.SelectedModelType) (Model, Model, error) {
@@ -788,6 +913,14 @@ func (c *coordinator) UpdateModels(ctx context.Context) error {
 	}
 	c.currentAgent.SetTools(tools)
 	return nil
+}
+
+func (c *coordinator) Capabilities() []capability.Descriptor {
+	_ = c.readyWg.Wait()
+	if c.capabilities == nil {
+		return nil
+	}
+	return c.capabilities.List()
 }
 
 func (c *coordinator) QueuedPrompts(sessionID string) int {

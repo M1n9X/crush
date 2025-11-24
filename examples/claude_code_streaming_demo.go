@@ -1,3 +1,5 @@
+//go:build ignore
+
 // Demo: Claude Code with Real-time Streaming Output
 // This demonstrates the streaming output capability of the Claude Code Orchestrator
 

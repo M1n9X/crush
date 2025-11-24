@@ -3,6 +3,7 @@ package permissions
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"charm.land/bubbles/v2/help"
@@ -28,7 +29,8 @@ const (
 	PermissionAllowForSession PermissionAction = "allow_session"
 	PermissionDeny            PermissionAction = "deny"
 
-	PermissionsDialogID dialogs.DialogID = "permissions"
+	PermissionsDialogID     dialogs.DialogID = "permissions"
+	PermissionsListDialogID dialogs.DialogID = "permissions:list"
 )
 
 // PermissionResponseMsg represents the user's response to a permission request
@@ -44,10 +46,12 @@ type PermissionDialogCmp interface {
 
 // permissionDialogCmp is the implementation of PermissionDialog
 type permissionDialogCmp struct {
+	mode            Mode
 	wWidth          int
 	wHeight         int
 	width           int
 	height          int
+	id              dialogs.DialogID
 	permission      permission.PermissionRequest
 	contentViewPort viewport.Model
 	selectedOption  int // 0: Allow, 1: Allow for session, 2: Deny
@@ -68,7 +72,17 @@ type permissionDialogCmp struct {
 	finalDialogHeight int
 
 	keyMap KeyMap
+
+	persistent []permission.PermissionRequest
 }
+
+// Mode determines whether we show a prompt or a read-only list.
+type Mode int
+
+const (
+	modePrompt Mode = iota
+	modeList
+)
 
 func NewPermissionDialogCmp(permission permission.PermissionRequest, opts *Options) PermissionDialogCmp {
 	if opts == nil {
@@ -78,12 +92,27 @@ func NewPermissionDialogCmp(permission permission.PermissionRequest, opts *Optio
 	// Create viewport for content
 	contentViewport := viewport.New()
 	return &permissionDialogCmp{
+		mode:            modePrompt,
 		contentViewPort: contentViewport,
 		selectedOption:  0, // Default to "Allow"
 		permission:      permission,
 		diffSplitMode:   opts.isSplitMode(),
 		keyMap:          DefaultKeyMap(),
 		contentDirty:    true, // Mark as dirty initially
+		id:              PermissionsDialogID,
+	}
+}
+
+// NewPermissionListCmp builds a read-only list dialog for persistent permissions.
+func NewPermissionListCmp(perms []permission.PermissionRequest) PermissionDialogCmp {
+	contentViewport := viewport.New()
+	return &permissionDialogCmp{
+		mode:            modeList,
+		contentViewPort: contentViewport,
+		persistent:      perms,
+		keyMap:          DefaultKeyMap(),
+		contentDirty:    true,
+		id:              PermissionsListDialogID,
 	}
 }
 
@@ -92,10 +121,29 @@ func (p *permissionDialogCmp) Init() tea.Cmd {
 }
 
 func (p *permissionDialogCmp) supportsDiffView() bool {
+	if p.mode == modeList {
+		return false
+	}
 	return p.permission.ToolName == tools.EditToolName || p.permission.ToolName == tools.WriteToolName || p.permission.ToolName == tools.MultiEditToolName
 }
 
 func (p *permissionDialogCmp) Update(msg tea.Msg) (util.Model, tea.Cmd) {
+	if p.mode == modeList {
+		switch msg := msg.(type) {
+		case tea.WindowSizeMsg:
+			p.wWidth = msg.Width
+			p.wHeight = msg.Height
+			p.contentDirty = true
+			cmd := p.SetSize()
+			return p, cmd
+		case tea.KeyPressMsg, tea.MouseWheelMsg:
+			viewPort, cmd := p.contentViewPort.Update(msg)
+			p.contentViewPort = viewPort
+			return p, cmd
+		}
+		// list mode is read-only
+		return p, nil
+	}
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
@@ -207,9 +255,6 @@ func (p *permissionDialogCmp) scrollRight() {
 // isMouseOverDialog checks if the given mouse coordinates are within the dialog bounds.
 // Returns true if the mouse is over the dialog area, false otherwise.
 func (p *permissionDialogCmp) isMouseOverDialog(x, y int) bool {
-	if p.permission.ID == "" {
-		return false
-	}
 	var (
 		dialogX      = p.positionCol
 		dialogY      = p.positionRow
@@ -238,6 +283,9 @@ func (p *permissionDialogCmp) selectCurrentOption() tea.Cmd {
 }
 
 func (p *permissionDialogCmp) renderButtons() string {
+	if p.mode == modeList {
+		return ""
+	}
 	t := styles.CurrentTheme()
 	baseStyle := t.S().Base
 
@@ -274,6 +322,10 @@ func (p *permissionDialogCmp) renderButtons() string {
 func (p *permissionDialogCmp) renderHeader() string {
 	t := styles.CurrentTheme()
 	baseStyle := t.S().Base
+	if p.mode == modeList {
+		label := fmt.Sprintf("Persistent approvals (%d)", len(p.persistent))
+		return baseStyle.Render(t.S().Muted.Render(label))
+	}
 
 	toolKey := t.S().Muted.Render("Tool")
 	toolValue := t.S().Text.
@@ -432,27 +484,31 @@ func (p *permissionDialogCmp) getOrGenerateContent() string {
 
 	// Generate new content
 	var content string
-	switch p.permission.ToolName {
-	case tools.BashToolName:
-		content = p.generateBashContent()
-	case tools.DownloadToolName:
-		content = p.generateDownloadContent()
-	case tools.EditToolName:
-		content = p.generateEditContent()
-	case tools.WriteToolName:
-		content = p.generateWriteContent()
-	case tools.MultiEditToolName:
-		content = p.generateMultiEditContent()
-	case tools.FetchToolName:
-		content = p.generateFetchContent()
-	case tools.AgenticFetchToolName:
-		content = p.generateAgenticFetchContent()
-	case tools.ViewToolName:
-		content = p.generateViewContent()
-	case tools.LSToolName:
-		content = p.generateLSContent()
-	default:
-		content = p.generateDefaultContent()
+	if p.mode == modeList {
+		content = p.buildListView()
+	} else {
+		switch p.permission.ToolName {
+		case tools.BashToolName:
+			content = p.generateBashContent()
+		case tools.DownloadToolName:
+			content = p.generateDownloadContent()
+		case tools.EditToolName:
+			content = p.generateEditContent()
+		case tools.WriteToolName:
+			content = p.generateWriteContent()
+		case tools.MultiEditToolName:
+			content = p.generateMultiEditContent()
+		case tools.FetchToolName:
+			content = p.generateFetchContent()
+		case tools.AgenticFetchToolName:
+			content = p.generateAgenticFetchContent()
+		case tools.ViewToolName:
+			content = p.generateViewContent()
+		case tools.LSToolName:
+			content = p.generateLSContent()
+		default:
+			content = p.generateDefaultContent()
+		}
 	}
 
 	// Cache the result
@@ -460,6 +516,84 @@ func (p *permissionDialogCmp) getOrGenerateContent() string {
 	p.contentDirty = false
 
 	return content
+}
+
+func (p *permissionDialogCmp) buildListView() string {
+	t := styles.CurrentTheme()
+	baseStyle := t.S().Base.Background(t.BgSubtle)
+
+	width := p.contentViewPort.Width()
+	if width <= 0 {
+		width = max(20, p.width-4)
+	}
+
+	if len(p.persistent) == 0 {
+		return baseStyle.
+			Width(width).
+			Padding(1, 2).
+			Render(t.S().Muted.Render("No persistent permissions stored for this workspace."))
+	}
+
+	perms := slices.Clone(p.persistent)
+	slices.SortFunc(perms, func(a, b permission.PermissionRequest) int {
+		if a.ToolName != b.ToolName {
+			return strings.Compare(a.ToolName, b.ToolName)
+		}
+		if a.Action != b.Action {
+			return strings.Compare(a.Action, b.Action)
+		}
+		return strings.Compare(a.Path, b.Path)
+	})
+
+	toolWidth := 16
+	actionWidth := 12
+	sessionWidth := 10
+	pathWidth := width - toolWidth - actionWidth - sessionWidth - 6
+	if pathWidth < 12 {
+		pathWidth = 12
+	}
+
+	header := fmt.Sprintf(
+		"%-*s %-*s %-*s %-*s",
+		toolWidth, "Tool",
+		actionWidth, "Action",
+		sessionWidth, "Session",
+		pathWidth, "Path",
+	)
+	lines := []string{
+		t.S().Muted.Bold(true).Render(ansi.Truncate(header, width, "…")),
+		t.S().Muted.Render(strings.Repeat("─", min(width, toolWidth+actionWidth+sessionWidth+pathWidth+3))),
+	}
+
+	for _, perm := range perms {
+		session := perm.SessionID
+		if session == "" {
+			session = "*"
+		}
+		path := perm.Path
+		if path == "" {
+			path = "(any path)"
+		} else {
+			path = fsext.PrettyPath(path)
+		}
+		line := fmt.Sprintf(
+			"%-*s %-*s %-*s %-*s",
+			toolWidth, ansi.Truncate(perm.ToolName, toolWidth, "…"),
+			actionWidth, ansi.Truncate(perm.Action, actionWidth, "…"),
+			sessionWidth, ansi.Truncate(session, sessionWidth, "…"),
+			pathWidth, ansi.Truncate(path, pathWidth, "…"),
+		)
+		lines = append(lines, t.S().Text.Render(line))
+		if strings.TrimSpace(perm.Description) != "" {
+			desc := ansi.Truncate(strings.TrimSpace(perm.Description), width-4, "…")
+			lines = append(lines, t.S().Muted.Render("    "+desc))
+		}
+	}
+
+	return baseStyle.
+		Width(width).
+		Padding(1, 1).
+		Render(strings.Join(lines, "\n"))
 }
 
 func (p *permissionDialogCmp) generateBashContent() string {
@@ -735,11 +869,18 @@ func (p *permissionDialogCmp) styleViewport() string {
 func (p *permissionDialogCmp) render() string {
 	t := styles.CurrentTheme()
 	baseStyle := t.S().Base
-	title := core.Title("Permission Required", p.width-4)
+	titleText := "Permission Required"
+	if p.mode == modeList {
+		titleText = "Permissions"
+	}
+	title := core.Title(titleText, p.width-4)
 	// Render header
 	headerContent := p.renderHeader()
 	// Render buttons
 	buttons := p.renderButtons()
+	if p.mode == modeList {
+		buttons = ""
+	}
 
 	p.contentViewPort.SetWidth(p.width - 4)
 
@@ -759,7 +900,7 @@ func (p *permissionDialogCmp) render() string {
 	p.positionRow -= 3 // Move dialog slightly higher than middle
 
 	var contentHelp string
-	if p.supportsDiffView() {
+	if p.mode == modePrompt && p.supportsDiffView() {
 		contentHelp = help.New().View(p.keyMap)
 	}
 
@@ -796,41 +937,43 @@ func (p *permissionDialogCmp) View() string {
 }
 
 func (p *permissionDialogCmp) SetSize() tea.Cmd {
-	if p.permission.ID == "" {
-		return nil
-	}
-
 	oldWidth, oldHeight := p.width, p.height
 
-	switch p.permission.ToolName {
-	case tools.BashToolName:
+	switch {
+	case p.mode == modeList:
+		p.width = int(float64(p.wWidth) * 0.75)
+		p.height = int(float64(p.wHeight) * 0.65)
+	case p.permission.ToolName == tools.BashToolName:
 		p.width = int(float64(p.wWidth) * 0.8)
 		p.height = int(float64(p.wHeight) * 0.3)
-	case tools.DownloadToolName:
+	case p.permission.ToolName == tools.DownloadToolName:
 		p.width = int(float64(p.wWidth) * 0.8)
 		p.height = int(float64(p.wHeight) * 0.4)
-	case tools.EditToolName:
+	case p.permission.ToolName == tools.EditToolName:
 		p.width = int(float64(p.wWidth) * 0.8)
 		p.height = int(float64(p.wHeight) * 0.8)
-	case tools.WriteToolName:
+	case p.permission.ToolName == tools.WriteToolName:
 		p.width = int(float64(p.wWidth) * 0.8)
 		p.height = int(float64(p.wHeight) * 0.8)
-	case tools.MultiEditToolName:
+	case p.permission.ToolName == tools.MultiEditToolName:
 		p.width = int(float64(p.wWidth) * 0.8)
 		p.height = int(float64(p.wHeight) * 0.8)
-	case tools.FetchToolName:
+	case p.permission.ToolName == tools.FetchToolName:
 		p.width = int(float64(p.wWidth) * 0.8)
 		p.height = int(float64(p.wHeight) * 0.3)
-	case tools.AgenticFetchToolName:
+	case p.permission.ToolName == tools.AgenticFetchToolName:
 		p.width = int(float64(p.wWidth) * 0.8)
 		p.height = int(float64(p.wHeight) * 0.4)
-	case tools.ViewToolName:
+	case p.permission.ToolName == tools.ViewToolName:
 		p.width = int(float64(p.wWidth) * 0.8)
 		p.height = int(float64(p.wHeight) * 0.4)
-	case tools.LSToolName:
+	case p.permission.ToolName == tools.LSToolName:
 		p.width = int(float64(p.wWidth) * 0.8)
 		p.height = int(float64(p.wHeight) * 0.4)
 	default:
+		if p.permission.ID == "" {
+			return nil
+		}
 		p.width = int(float64(p.wWidth) * 0.7)
 		p.height = int(float64(p.wHeight) * 0.5)
 	}
@@ -864,7 +1007,7 @@ func (c *permissionDialogCmp) GetOrSetMarkdown(key string, generator func() (str
 
 // ID implements PermissionDialogCmp.
 func (p *permissionDialogCmp) ID() dialogs.DialogID {
-	return PermissionsDialogID
+	return p.id
 }
 
 // Position implements PermissionDialogCmp.

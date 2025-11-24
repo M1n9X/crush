@@ -1,6 +1,7 @@
 package status
 
 import (
+	"fmt"
 	"time"
 
 	"charm.land/bubbles/v2/help"
@@ -15,6 +16,18 @@ type StatusCmp interface {
 	util.Model
 	ToggleFullHelp()
 	SetKeyMap(keyMap help.KeyMap)
+	SetTelemetry(TelemetryMetrics)
+}
+
+type TelemetryMetrics struct {
+	TokensIn  int64
+	TokensOut int64
+	Cost      float64
+	SessionID string
+}
+
+type TelemetryMsg struct {
+	TelemetryMetrics
 }
 
 type statusCmp struct {
@@ -23,6 +36,7 @@ type statusCmp struct {
 	messageTTL time.Duration
 	help       help.Model
 	keyMap     help.KeyMap
+	telemetry  TelemetryMetrics
 }
 
 // clearMessageCmd is a command that clears status messages after a timeout
@@ -53,6 +67,8 @@ func (m *statusCmp) Update(msg tea.Msg) (util.Model, tea.Cmd) {
 		return m, m.clearMessageCmd(ttl)
 	case util.ClearStatusMsg:
 		m.info = util.InfoMsg{}
+	case TelemetryMsg:
+		m.telemetry = msg.TelemetryMetrics
 	}
 	return m, nil
 }
@@ -62,6 +78,8 @@ func (m *statusCmp) View() string {
 	status := t.S().Base.Padding(0, 1, 1, 1).Render(m.help.View(m.keyMap))
 	if m.info.Msg != "" {
 		status = m.infoMsg()
+	} else if m.telemetry.Cost > 0 || m.telemetry.TokensIn > 0 || m.telemetry.TokensOut > 0 {
+		status = m.telemetryMsg()
 	}
 	return status
 }
@@ -94,12 +112,22 @@ func (m *statusCmp) infoMsg() string {
 	return ansi.Truncate(infoType+message, m.width, "…")
 }
 
+func (m *statusCmp) telemetryMsg() string {
+	t := styles.CurrentTheme()
+	text := fmt.Sprintf("in:%d out:%d cost:$%.4f", m.telemetry.TokensIn, m.telemetry.TokensOut, m.telemetry.Cost)
+	return t.S().Base.Foreground(t.FgHalfMuted).Padding(0, 1, 1, 1).Render(ansi.Truncate(text, m.width, "…"))
+}
+
 func (m *statusCmp) ToggleFullHelp() {
 	m.help.ShowAll = !m.help.ShowAll
 }
 
 func (m *statusCmp) SetKeyMap(keyMap help.KeyMap) {
 	m.keyMap = keyMap
+}
+
+func (m *statusCmp) SetTelemetry(metrics TelemetryMetrics) {
+	m.telemetry = metrics
 }
 
 func NewStatusCmp() StatusCmp {

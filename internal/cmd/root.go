@@ -43,6 +43,9 @@ func init() {
 		updateProvidersCmd,
 		logsCmd,
 		schemaCmd,
+		permissionsCmd,
+		toolsCmd,
+		pluginsCmd,
 	)
 }
 

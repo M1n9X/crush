@@ -1,6 +1,6 @@
 # Feature Porting: CodeBreeze -> Crush
-> Status: Draft  
-> Updated: 2025-02-15
+> Status: In Progress  
+> Updated: 2025-02-16
 
 ## Purpose
 - Establish a clear feature diff between **Crush** (Go, Bubble Tea TUI, MCP/LSP/tool system) and **CodeBreeze** (TS mono-repo with Ink UI, DI runtime, capability registry).
@@ -11,16 +11,39 @@
 
 | Area | CodeBreeze (source) | Crush (source) | Gap / Opportunity |
 | --- | --- | --- | --- |
-| Runtime composition | DI container + registrar pattern (`packages/runtime/src/registrars/*.ts`); capability registry (`packages/runtime/src/capabilities/registry.ts`) | Direct wiring in Go structs; no DI container; tool registration lives in `internal/agent/tools` | Introduce a lightweight registry layer in Go to decouple tool/provider wiring and enable swappable implementations. |
-| Tool descriptors & permissions | Declarative capability descriptors with permission workflow + per-project stores (`packages/runtime/src/capabilities`); CLI to list/grant/revoke permissions (docs/architecture.md) | Simple allowlist + prompt (`crush.json` `permissions.allowed_tools`, `--yolo`) without capability metadata | Add a capability descriptor model (id, schema, safety posture) and permission store; CLI/TUI affordances for per-session overrides. |
+| Runtime composition | DI container + registrar pattern (`packages/runtime/src/registrars/*.ts`); capability registry (`packages/runtime/src/capabilities/registry.ts`) | Lightweight registrars (`internal/runtime/registrars.go`) seed MCP/telemetry/permissions; capability registry for tools | Expand registrar set (tools/plugins) and surface status in UI; keep Go wiring minimal. |
+| Tool descriptors & permissions | Declarative capability descriptors with permission workflow + per-project stores (`packages/runtime/src/capabilities`) | Capability registry + `crush permissions` CLI (list/grant/revoke/clear/export); per-workspace persistent store | Add UI surfacing (permissions overlay), and per-tool manifest metadata (schema/safety). |
 | Tool surface area | 18+ built-in tools (file I/O, search, command exec, media inspection, docs) exposed via capability registry (README) | Rich core tools plus MCP + LSP tools; no unified manifest or per-tool telemetry | Normalize tool manifest + telemetry hooks so tools report usage/cost and can be dynamically toggled. |
-| Context resilience | Auto-compact conversation + file recovery (`src/utils/autoCompactCore.ts`, `src/utils/fileRecoveryCore.ts`), message context manager | Long sessions stored in SQLite; no automatic compaction/recovery; manual summaries only | Port auto-compaction with token thresholds, LLM summaries, and recent-file replay. |
-| Reasoning control | Keyword-driven thinking tokens + reasoning effort override (`src/utils/thinking.ts`) | Static model params; no user-level reasoning keyword controls | Add reasoning-effort parser that maps keywords to token/effort overrides per provider. |
-| Context ingestion | Automatic project scan + AGENTS.md ingestion, freshness tracking (`docs/architecture.md`, `fileFreshness` services) | Initialization writes AGENTS/CRUSH file; ignores freshness ranking beyond LSP diagnostics | Reuse freshness tracking to prioritize files for context and recovery. |
-| Observability | Telemetry bus + cost tracking, debug overlays, Ink UI events (`packages/core/src/orchestration/telemetry.ts`, docs/architecture.md) | Cost persisted per session (`internal/db`); limited UI surfacing; no event bus for tools/providers | Emit structured telemetry events (turn lifecycle, tool exec) and surface in TUI (status bar/log drawer). |
-| Plugin/extension model | Versioned plugin API (`docs/plugins/migration.md`), runtime plugin host | MCP integration only; no first-class plugin host for Go tools | Provide plugin hooks or map plugin API to MCP-like loaders with capability descriptors. |
-| Config durability | Global config auto-backup/repair (`~/.codebreeze/config.json` + `.backup`) | JSON schema validation only; no automated backup/repair on save | Add config backup + repair routine to avoid breakage after edits. |
-| UI ergonomics | Ink-based CLI with overlays, streamed command panes, Vim-like navigation | Bubble Tea TUI with chat/sidebar; fewer overlays; commands panel available | Selectively port overlay patterns (permission prompts, telemetry panels) without breaking Bubble Tea UX. |
+| Context resilience | Auto-compact conversation + file recovery | Auto-compaction with LLM summary + freshness-prioritized file recovery + disk fallback | Add UI notice/log panel; tune thresholds per provider. |
+| Reasoning control | Keyword-driven thinking tokens + reasoning effort override | Keyword parser mapping to provider thinking/reasoning options and max_tokens | Expose toggle in config/CLI; add TUI indicator. |
+| Context ingestion | Automatic project scan + AGENTS ingestion, freshness tracking | Freshness service seeded from history + context_paths + AGENTS scan; persisted to data dir | Add deeper scan (LSP/activity) and UI surfacing. |
+| Observability | Telemetry bus + cost tracking, debug overlays, Ink UI events | Telemetry recorder + tool-finish/token events; registrar logging + TUI “Telemetry Pulse” overlay | Add richer filtering/trends and per-provider costs. |
+| Plugin/extension model | Versioned plugin API + runtime host | Plugin host + manifest loader (`plugins_manifest` / auto-detect) with CLI listing | Wire plugins into capability registry + permissions; add enable/disable + sandbox policy. |
+| Config durability | Auto-backup/repair | Backup + backup fallback + lenient load | Add schema-based repair and warning surfacing. |
+| UI ergonomics | Ink overlays, streamed panes | Bubble Tea TUI; permission dialog exists | Add overlays for telemetry/permissions & tool manifest view. |
+
+## What’s Already Migrated
+- **Capability registry + manifests**: Go registry for tools/plugins (`crush tools list`, `crush plugins list`); auto-detect tool/plugin manifests (`tools.json`, `plugins.json`, `.crush/tools.json` etc.) and register plugin descriptors as `plugin:*` capabilities.
+- **Permissions durability & UX**: Workspace-scoped JSON store (path hashed) with CLI (`crush permissions list|grant|revoke|clear|export`) and TUI command palette entry **View Permissions** (read-only) to inspect persistent approvals.
+- **Context resilience**: Auto-compaction with LLM summaries plus freshness-aware file recovery (seeded from history, context_paths, initialize_as, AGENTS/CRUSH/CLAUDE markers) persisted to `data_directory/freshness.json`.
+- **Thinking controls**: Keyword parser maps “think harder” phrases to provider-specific options (Anthropic/OpenAI/OpenRouter/Google/OpenAI-compatible) with configurable defaults.
+- **Telemetry**: Recorder emits `tool_finished` / `tokens_used` events, telemetry registrar logs, and TUI command palette entry **Telemetry Pulse** renders recent events with token/cost totals plus top tools by spend.
+- **Runtime composition**: Registrars for tools, plugins, permissions, telemetry, MCP init, manifest loaders, capability registry, and plugin host are wired for App + Coordinator lifecycles.
+- **Config resilience**: Lenient config loader with automatic `.backup` fallback; manifest paths are normalized; corrupt JSON is auto-repaired when possible; unknown top-level keys are pruned with a warning.
+- **Plugin controls**: CLI `crush plugins list|enable|disable` with per-workspace persistence and sandbox label display, plus TUI **Manage Plugins** palette entry to toggle state (enable is permission-checked); plugin descriptors always registered for visibility.
+- **Context surfacing**: Command palette entry **View Fresh Context** lists freshest files for the active session (based on recovery/freshness tracking).
+- **Telemetry surfacing**: Status bar shows cumulative tokens/cost; telemetry dialog supports per-session filtering and top tools by spend.
+
+## How to Use the New Surfaces
+- **Permissions**: `crush permissions list` (CLI) or open “Commands” → “View Permissions” to inspect stored approvals. Grants/revokes persist per workspace; the TUI list is read-only to avoid accidental changes.
+- **Telemetry**: Open “Commands” → “Telemetry Pulse” to see the latest tool events, tokens in/out, and cumulative cost (newest first, last 20).
+- **Plugins/Tools manifests**: Provide `tools_manifest` / `plugins_manifest` in `crush.json` or drop `tools.json` / `plugins.json` / `.crush/tools.json` in the project; `crush tools list` / `crush plugins list` shows what was registered.
+
+## Remaining Gaps to Close
+- **Plugins UX**: Permission prompts per plugin capability, sandbox policy enforcement, and descriptor-driven capability permissions (TUI toggles ship; execution sandboxing still TODO).
+- **Config repair**: Surface validation warnings and schema-based default insertion beyond top-level pruning.
+- **Context surfacing**: Inline UI hints when recovery replays files; optional deeper scan hooks (LSP activity, recent edits).
+- **Telemetry depth**: Filters per tool, trendlines, per-provider cost summaries; richer status-bar hooks.
 
 ## CodeBreeze Strengths Worth Migrating
 - **Auto-compaction + recovery**: `src/utils/autoCompactCore.ts` compresses conversation when usage >92% of context, generates a structured summary, and reattaches recent files chosen by `src/utils/fileRecoveryCore.ts`. Failures degrade gracefully.
@@ -71,12 +94,12 @@
 - Add minimal “repair” (e.g., pruning unknown fields) backed by `schema.json`.
 
 ## Suggested Work Sequencing
-1) Registry + permission store scaffolding (unblocks later steps).  
-2) Context compaction + recovery (user-facing win, contained blast radius).  
-3) Reasoning controls + provider mapping.  
-4) Telemetry bus + TUI surface.  
-5) Plugin/descriptor ingestion + CLI permissions.  
-6) Config durability polish.
+1) Registry + permission store scaffolding ✅  
+2) Context compaction + recovery ✅  
+3) Reasoning controls + provider mapping ✅  
+4) Telemetry bus + TUI surface ✅ (pulse view shipped; needs trends/filters)  
+5) Plugin/descriptor ingestion + CLI permissions ✅ (enable/disable UX pending)  
+6) Config durability polish ⏳
 
 ## Risks / Mitigations
 - **Token estimation mismatch**: validate compaction thresholds per provider; keep a manual escape hatch to disable auto-compact.  

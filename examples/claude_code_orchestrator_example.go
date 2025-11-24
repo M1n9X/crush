@@ -36,6 +36,8 @@ func (d *demoPermissionService) Subscribe(ctx context.Context) <-chan pubsub.Eve
 func (d *demoPermissionService) SubscribeNotifications(ctx context.Context) <-chan pubsub.Event[permission.PermissionNotification] {
 	return make(<-chan pubsub.Event[permission.PermissionNotification])
 }
+func (d *demoPermissionService) Persistent() []permission.PermissionRequest { return nil }
+func (d *demoPermissionService) ClearPersistent() error                     { return nil }
 
 func main() {
 	fmt.Println("🚀 Claude Code Orchestrator Example")

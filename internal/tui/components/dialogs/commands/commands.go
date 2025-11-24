@@ -83,6 +83,10 @@ type (
 	OpenReasoningDialogMsg struct{}
 	OpenExternalEditorMsg  struct{}
 	ToggleYoloModeMsg      struct{}
+	OpenPermissionsListMsg struct{}
+	OpenTelemetryDialogMsg struct{}
+	OpenFreshnessDialogMsg struct{}
+	OpenPluginsDialogMsg   struct{}
 	CompactMsg             struct {
 		SessionID string
 	}
@@ -365,6 +369,14 @@ func (c *commandDialogCmp) defaultCommands() []Command {
 				})
 			},
 		})
+		commands = append(commands, Command{
+			ID:          "fresh_context",
+			Title:       "View Fresh Context",
+			Description: "Show recent files used for recovery/context",
+			Handler: func(cmd Command) tea.Cmd {
+				return util.CmdHandler(OpenFreshnessDialogMsg{})
+			},
+		})
 	}
 
 	// Add reasoning toggle for models that support it
@@ -443,6 +455,33 @@ func (c *commandDialogCmp) defaultCommands() []Command {
 			},
 		})
 	}
+
+	commands = append(commands,
+		Command{
+			ID:          "permissions",
+			Title:       "View Permissions",
+			Description: "Show persistent approvals for this workspace",
+			Handler: func(cmd Command) tea.Cmd {
+				return util.CmdHandler(OpenPermissionsListMsg{})
+			},
+		},
+		Command{
+			ID:          "telemetry",
+			Title:       "Telemetry Pulse",
+			Description: "View recent tool usage, tokens, and cost",
+			Handler: func(cmd Command) tea.Cmd {
+				return util.CmdHandler(OpenTelemetryDialogMsg{})
+			},
+		},
+		Command{
+			ID:          "plugins",
+			Title:       "Manage Plugins",
+			Description: "View and toggle plugins for this workspace",
+			Handler: func(cmd Command) tea.Cmd {
+				return util.CmdHandler(OpenPluginsDialogMsg{})
+			},
+		},
+	)
 
 	return append(commands, []Command{
 		{

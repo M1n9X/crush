@@ -11,6 +11,7 @@ import (
 	"cmp"
 	"context"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -30,10 +31,14 @@ import (
 	"github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/csync"
+	"github.com/charmbracelet/crush/internal/freshness"
+	"github.com/charmbracelet/crush/internal/fsext"
+	"github.com/charmbracelet/crush/internal/history"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/stringext"
+	"github.com/charmbracelet/crush/internal/telemetry"
 )
 
 //go:embed templates/title.md
@@ -41,6 +46,13 @@ var titlePrompt []byte
 
 //go:embed templates/summary.md
 var summaryPrompt []byte
+
+const (
+	autoCompactThresholdRatio = 0.92
+	maxRecoveredFiles         = 5
+	maxTokensPerRecoveredFile = 10_000
+	maxTotalRecoveredTokens   = 50_000
+)
 
 type SessionAgentCall struct {
 	SessionID        string
@@ -85,9 +97,14 @@ type sessionAgent struct {
 	messages             message.Service
 	disableAutoSummarize bool
 	isYolo               bool
+	history              history.Service
+	workingDir           string
+	telemetry            *telemetry.Recorder
+	freshness            *freshness.Service
 
 	messageQueue   *csync.Map[string, []SessionAgentCall]
 	activeRequests *csync.Map[string, context.CancelFunc]
+	toolTimers     *csync.Map[string, time.Time]
 }
 
 type SessionAgentOptions struct {
@@ -100,6 +117,10 @@ type SessionAgentOptions struct {
 	Sessions             session.Service
 	Messages             message.Service
 	Tools                []fantasy.AgentTool
+	History              history.Service
+	WorkingDir           string
+	Telemetry            *telemetry.Recorder
+	Freshness            *freshness.Service
 }
 
 func NewSessionAgent(
@@ -115,8 +136,13 @@ func NewSessionAgent(
 		disableAutoSummarize: opts.DisableAutoSummarize,
 		tools:                opts.Tools,
 		isYolo:               opts.IsYolo,
+		history:              opts.History,
+		workingDir:           opts.WorkingDir,
+		telemetry:            opts.Telemetry,
+		freshness:            opts.Freshness,
 		messageQueue:         csync.NewMap[string, []SessionAgentCall](),
 		activeRequests:       csync.NewMap[string, context.CancelFunc](),
+		toolTimers:           csync.NewMap[string, time.Time](),
 	}
 }
 
@@ -159,6 +185,15 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	msgs, err := a.getSessionMessages(ctx, currentSession)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get session messages: %w", err)
+	}
+
+	var compacted bool
+	currentSession, msgs, compacted, err = a.maybeAutoCompact(ctx, currentSession, msgs, call.ProviderOptions)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compact session: %w", err)
+	}
+	if compacted {
+		slog.Info("Session auto-compacted", "session_id", call.SessionID)
 	}
 
 	var wg sync.WaitGroup
@@ -302,6 +337,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				ProviderExecuted: false,
 				Finished:         false,
 			}
+			a.toolTimers.Set(id, time.Now())
 			currentAssistant.AddToolCall(toolCall)
 			return a.messages.Update(genCtx, *currentAssistant)
 		},
@@ -322,6 +358,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		OnToolResult: func(result fantasy.ToolResultContent) error {
 			var resultContent string
 			isError := false
+			start, _ := a.toolTimers.Get(result.ToolCallID)
+			duration := time.Since(start)
+			a.toolTimers.Del(result.ToolCallID)
 			switch result.Result.GetType() {
 			case fantasy.ToolResultContentTypeText:
 				r, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentText](result.Result)
@@ -352,6 +391,19 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			})
 			if createMsgErr != nil {
 				return createMsgErr
+			}
+			if a.telemetry != nil {
+				tokensIn, tokensOut, toolCost := toolUsage(result.ProviderMetadata, result.ClientMetadata)
+				a.telemetry.Publish(telemetry.Event{
+					Type:      telemetry.EventToolFinished,
+					SessionID: call.SessionID,
+					ToolName:  result.ToolName,
+					Duration:  duration,
+					TokensIn:  tokensIn,
+					TokensOut: tokensOut,
+					Cost:      toolCost,
+					At:        time.Now(),
+				})
 			}
 			return nil
 		},
@@ -514,6 +566,254 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	firstQueuedMessage := queuedMessages[0]
 	a.messageQueue.Set(call.SessionID, queuedMessages[1:])
 	return a.Run(ctx, firstQueuedMessage)
+}
+
+func (a *sessionAgent) maybeAutoCompact(ctx context.Context, sess session.Session, msgs []message.Message, providerOpts fantasy.ProviderOptions) (session.Session, []message.Message, bool, error) {
+	if a.disableAutoSummarize {
+		return sess, msgs, false, nil
+	}
+	contextWindow := int64(a.largeModel.CatwalkCfg.ContextWindow)
+	if contextWindow == 0 {
+		return sess, msgs, false, nil
+	}
+
+	usedTokens := sess.PromptTokens + sess.CompletionTokens
+	if float64(usedTokens) < float64(contextWindow)*autoCompactThresholdRatio {
+		return sess, msgs, false, nil
+	}
+
+	compactedSession, compactedMsgs, err := a.autoCompactSession(ctx, sess, msgs, providerOpts)
+	if err != nil {
+		return sess, msgs, false, err
+	}
+	return compactedSession, compactedMsgs, true, nil
+}
+
+func (a *sessionAgent) autoCompactSession(ctx context.Context, sess session.Session, msgs []message.Message, providerOpts fantasy.ProviderOptions) (session.Session, []message.Message, error) {
+	if len(msgs) == 0 {
+		return sess, msgs, nil
+	}
+
+	if providerOpts == nil {
+		providerOpts = fantasy.ProviderOptions{}
+	}
+
+	history, _ := a.preparePrompt(msgs)
+	compactionNotice := fmt.Sprintf("Context automatically compressed (%.0f%% of window used). Preserved summary and recent files.", autoCompactThresholdRatio*100)
+
+	genCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	summaryMessage, err := a.messages.Create(genCtx, sess.ID, message.CreateMessageParams{
+		Role:             message.Assistant,
+		Model:            a.largeModel.Model.Model(),
+		Provider:         a.largeModel.Model.Provider(),
+		IsSummaryMessage: true,
+	})
+	if err != nil {
+		return sess, msgs, err
+	}
+
+	agent := fantasy.NewAgent(a.largeModel.Model,
+		fantasy.WithSystemPrompt(string(summaryPrompt)),
+	)
+
+	resp, err := agent.Stream(genCtx, fantasy.AgentStreamCall{
+		Prompt:          "Provide a detailed summary of our conversation above.",
+		Messages:        history,
+		ProviderOptions: providerOpts,
+		PrepareStep: func(callContext context.Context, options fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
+			prepared.Messages = options.Messages
+			if a.systemPromptPrefix != "" {
+				prepared.Messages = append([]fantasy.Message{fantasy.NewSystemMessage(a.systemPromptPrefix)}, prepared.Messages...)
+			}
+			return callContext, prepared, nil
+		},
+		OnReasoningDelta: func(id string, text string) error {
+			summaryMessage.AppendReasoningContent(text)
+			return a.messages.Update(genCtx, summaryMessage)
+		},
+		OnReasoningEnd: func(id string, reasoning fantasy.ReasoningContent) error {
+			// Handle anthropic signature.
+			if anthropicData, ok := reasoning.ProviderMetadata["anthropic"]; ok {
+				if signature, ok := anthropicData.(*anthropic.ReasoningOptionMetadata); ok && signature.Signature != "" {
+					summaryMessage.AppendReasoningSignature(signature.Signature)
+				}
+			}
+			summaryMessage.FinishThinking()
+			return a.messages.Update(genCtx, summaryMessage)
+		},
+		OnTextDelta: func(id, text string) error {
+			summaryMessage.AppendContent(text)
+			return a.messages.Update(genCtx, summaryMessage)
+		},
+	})
+	if err != nil {
+		isCancelErr := errors.Is(err, context.Canceled)
+		if isCancelErr {
+			// User cancelled summarize we need to remove the summary message.
+			deleteErr := a.messages.Delete(ctx, summaryMessage.ID)
+			return sess, msgs, deleteErr
+		}
+		return sess, msgs, err
+	}
+
+	summaryMessage.AddFinish(message.FinishReasonEndTurn, "", "")
+	if err := a.messages.Update(genCtx, summaryMessage); err != nil {
+		return sess, msgs, err
+	}
+
+	var openrouterCost *float64
+	for _, step := range resp.Steps {
+		stepCost := a.openrouterCost(step.ProviderMetadata)
+		if stepCost != nil {
+			newCost := *stepCost
+			if openrouterCost != nil {
+				newCost += *openrouterCost
+			}
+			openrouterCost = &newCost
+		}
+	}
+
+	a.updateSessionUsage(a.largeModel, &sess, resp.TotalUsage, openrouterCost)
+
+	// Reset token counters to the summary footprint so we don't double-count
+	// tokens after compaction.
+	usage := resp.Response.Usage
+	sess.SummaryMessageID = summaryMessage.ID
+	sess.CompletionTokens = usage.OutputTokens
+	sess.PromptTokens = 0
+	if _, err := a.sessions.Save(genCtx, sess); err != nil {
+		return sess, msgs, err
+	}
+
+	_, _ = a.messages.Create(ctx, sess.ID, message.CreateMessageParams{
+		Role: message.User,
+		Parts: []message.ContentPart{
+			message.TextContent{Text: compactionNotice},
+		},
+	})
+
+	if recovered, err := a.recoverRecentFiles(ctx, sess.ID); err == nil {
+		for _, m := range recovered {
+			// Already created inside recoverRecentFiles.
+			history = append(history, m.ToAIMessage()...)
+		}
+	} else {
+		slog.Debug("failed to recover files after compaction", "err", err)
+	}
+
+	updatedSess, err := a.sessions.Get(ctx, sess.ID)
+	if err != nil {
+		return sess, msgs, err
+	}
+	updatedMsgs, err := a.getSessionMessages(ctx, updatedSess)
+	if err != nil {
+		return sess, msgs, err
+	}
+	return updatedSess, updatedMsgs, nil
+}
+
+func (a *sessionAgent) recoverRecentFiles(ctx context.Context, sessionID string) ([]message.Message, error) {
+	var paths []string
+	if a.freshness != nil {
+		top := a.freshness.Top(sessionID, maxRecoveredFiles)
+		for _, meta := range top {
+			paths = append(paths, meta.Path)
+		}
+	}
+	var historyFiles []history.File
+	if a.history != nil {
+		if len(paths) == 0 {
+			files, err := a.history.ListLatestSessionFiles(ctx, sessionID)
+			if err == nil {
+				historyFiles = files
+			}
+		} else {
+			for _, p := range paths {
+				if f, err := a.history.GetByPathAndSession(ctx, p, sessionID); err == nil {
+					historyFiles = append(historyFiles, f)
+				}
+			}
+		}
+	}
+	// Fallback: use collected paths to read from disk when history is missing.
+	pathSet := make(map[string]struct{})
+	for _, f := range historyFiles {
+		pathSet[f.Path] = struct{}{}
+	}
+	for _, p := range paths {
+		if _, ok := pathSet[p]; ok {
+			continue
+		}
+		if content, err := os.ReadFile(p); err == nil {
+			historyFiles = append(historyFiles, history.File{Path: p, Content: string(content)})
+		}
+	}
+	if len(historyFiles) == 0 {
+		return nil, nil
+	}
+	slog.Info("recovering context", "session", sessionID, "files", len(historyFiles))
+
+	var created []message.Message
+	var totalTokens int
+	for i, f := range historyFiles {
+		if i >= maxRecoveredFiles {
+			break
+		}
+		content, tokens, truncated := truncateByTokens(f.Content, maxTokensPerRecoveredFile)
+		if totalTokens+tokens > maxTotalRecoveredTokens {
+			break
+		}
+		totalTokens += tokens
+		body := fmt.Sprintf(
+			"**Recovered File:** %s\n\n```\n%s\n```\n\n(Auto-recovered%s)",
+			fsext.PrettyPath(f.Path),
+			addLineNumbers(content, 1),
+			boolSuffix(truncated, " [truncated]"),
+		)
+		msg, createErr := a.messages.Create(ctx, sessionID, message.CreateMessageParams{
+			Role: message.User,
+			Parts: []message.ContentPart{
+				message.TextContent{Text: body},
+			},
+		})
+		if createErr != nil {
+			return created, createErr
+		}
+		created = append(created, msg)
+
+	}
+	return created, nil
+}
+
+func truncateByTokens(content string, maxTokens int) (string, int, bool) {
+	estimated := len([]rune(content)) / 4
+	if estimated <= maxTokens {
+		return content, estimated, false
+	}
+	// Roughly keep within token budget.
+	maxRunes := maxTokens * 4
+	runes := []rune(content)
+	if maxRunes > len(runes) {
+		maxRunes = len(runes)
+	}
+	return string(runes[:maxRunes]), maxTokens, true
+}
+
+func addLineNumbers(content string, startLine int) string {
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		lines[i] = fmt.Sprintf("%d: %s", startLine+i, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func boolSuffix(ok bool, suffix string) string {
+	if ok {
+		return suffix
+	}
+	return ""
 }
 
 func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fantasy.ProviderOptions) error {
@@ -798,6 +1098,38 @@ func (a *sessionAgent) openrouterCost(metadata fantasy.ProviderMetadata) *float6
 	return &opts.Usage.Cost
 }
 
+func toolUsage(metadata fantasy.ProviderMetadata, clientMetadata string) (tokensIn, tokensOut int64, cost float64) {
+	// Prefer explicit client-supplied metrics when present.
+	if tokensIn, tokensOut, cost, ok := parseClientMetadata(clientMetadata); ok {
+		return tokensIn, tokensOut, cost
+	}
+	openrouterMetadata, ok := metadata[openrouter.Name]
+	if !ok {
+		return 0, 0, 0
+	}
+	if opts, ok := openrouterMetadata.(*openrouter.ProviderMetadata); ok {
+		return opts.Usage.PromptTokens, opts.Usage.CompletionTokens, opts.Usage.Cost
+	}
+	return 0, 0, 0
+}
+
+// parseClientMetadata extracts usage/cost if the tool runner encoded it as JSON
+// in the client metadata string (provider-agnostic fallback).
+func parseClientMetadata(metadata string) (tokensIn, tokensOut int64, cost float64, ok bool) {
+	if metadata == "" {
+		return 0, 0, 0, false
+	}
+	var payload struct {
+		TokensIn  int64   `json:"tokens_in"`
+		TokensOut int64   `json:"tokens_out"`
+		Cost      float64 `json:"cost"`
+	}
+	if err := json.Unmarshal([]byte(metadata), &payload); err != nil {
+		return 0, 0, 0, false
+	}
+	return payload.TokensIn, payload.TokensOut, payload.Cost, true
+}
+
 func (a *sessionAgent) updateSessionUsage(model Model, session *session.Session, usage fantasy.Usage, overrideCost *float64) {
 	modelConfig := model.CatwalkCfg
 	cost := modelConfig.CostPer1MInCached/1e6*float64(usage.CacheCreationTokens) +
@@ -815,6 +1147,17 @@ func (a *sessionAgent) updateSessionUsage(model Model, session *session.Session,
 
 	session.CompletionTokens = usage.OutputTokens + usage.CacheReadTokens
 	session.PromptTokens = usage.InputTokens + usage.CacheCreationTokens
+
+	if a.telemetry != nil {
+		a.telemetry.Publish(telemetry.Event{
+			Type:      telemetry.EventTokensUsed,
+			SessionID: session.ID,
+			Cost:      cost,
+			TokensIn:  usage.InputTokens + usage.CacheCreationTokens,
+			TokensOut: usage.OutputTokens + usage.CacheReadTokens,
+			At:        time.Now(),
+		})
+	}
 }
 
 func (a *sessionAgent) Cancel(sessionID string) {

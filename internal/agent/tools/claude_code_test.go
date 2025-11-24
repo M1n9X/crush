@@ -33,6 +33,8 @@ func (m *mockClaudeCodePermissionService) SkipRequests() bool                  {
 func (m *mockClaudeCodePermissionService) SubscribeNotifications(ctx context.Context) <-chan pubsub.Event[permission.PermissionNotification] {
 	return make(<-chan pubsub.Event[permission.PermissionNotification])
 }
+func (m *mockClaudeCodePermissionService) Persistent() []permission.PermissionRequest { return nil }
+func (m *mockClaudeCodePermissionService) ClearPersistent() error                     { return nil }
 
 func TestClaudeCodeTool_Info(t *testing.T) {
 	tool := NewClaudeCodeTool(&mockClaudeCodePermissionService{shouldAllow: true}, "/tmp")

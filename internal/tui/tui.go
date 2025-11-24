@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/crush/internal/event"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/pubsub"
+	"github.com/charmbracelet/crush/internal/telemetry"
 	cmpChat "github.com/charmbracelet/crush/internal/tui/components/chat"
 	"github.com/charmbracelet/crush/internal/tui/components/chat/splash"
 	"github.com/charmbracelet/crush/internal/tui/components/completions"
@@ -26,10 +27,13 @@ import (
 	"github.com/charmbracelet/crush/internal/tui/components/dialogs"
 	"github.com/charmbracelet/crush/internal/tui/components/dialogs/commands"
 	"github.com/charmbracelet/crush/internal/tui/components/dialogs/filepicker"
+	freshnessdlg "github.com/charmbracelet/crush/internal/tui/components/dialogs/freshness"
 	"github.com/charmbracelet/crush/internal/tui/components/dialogs/models"
 	"github.com/charmbracelet/crush/internal/tui/components/dialogs/permissions"
+	pluginsdlg "github.com/charmbracelet/crush/internal/tui/components/dialogs/plugins"
 	"github.com/charmbracelet/crush/internal/tui/components/dialogs/quit"
 	"github.com/charmbracelet/crush/internal/tui/components/dialogs/sessions"
+	telemetrydlg "github.com/charmbracelet/crush/internal/tui/components/dialogs/telemetry"
 	"github.com/charmbracelet/crush/internal/tui/page"
 	"github.com/charmbracelet/crush/internal/tui/page/chat"
 	"github.com/charmbracelet/crush/internal/tui/styles"
@@ -51,6 +55,68 @@ func MouseEventFilter(m tea.Model, msg tea.Msg) tea.Msg {
 		lastMouseEvent = now
 	}
 	return msg
+}
+
+type telemetryState struct {
+	events     []telemetry.Event
+	tokensIn   int64
+	tokensOut  int64
+	cost       float64
+	toolTotals map[string]telemetrydlg.ToolTotal
+}
+
+func (s *telemetryState) add(ev telemetry.Event) {
+	if s == nil {
+		return
+	}
+	s.events = append(s.events, ev)
+	if len(s.events) > 50 {
+		s.events = s.events[len(s.events)-50:]
+	}
+	s.tokensIn += ev.TokensIn
+	s.tokensOut += ev.TokensOut
+	s.cost += ev.Cost
+	if s.toolTotals == nil {
+		s.toolTotals = make(map[string]telemetrydlg.ToolTotal)
+	}
+	name := ev.ToolName
+	if name == "" {
+		name = string(ev.Type)
+	}
+	entry := s.toolTotals[name]
+	entry.Name = name
+	entry.Calls++
+	entry.TokensIn += ev.TokensIn
+	entry.TokensOut += ev.TokensOut
+	entry.Cost += ev.Cost
+	s.toolTotals[name] = entry
+}
+
+func (s telemetryState) snapshot(sessionID string) telemetrydlg.Snapshot {
+	snap := telemetrydlg.Snapshot{
+		TokensIn:  s.tokensIn,
+		TokensOut: s.tokensOut,
+		Cost:      s.cost,
+		SessionID: sessionID,
+	}
+	snap.Events = append(snap.Events, s.events...)
+	if len(s.toolTotals) > 0 {
+		totals := make([]telemetrydlg.ToolTotal, 0, len(s.toolTotals))
+		for _, tt := range s.toolTotals {
+			totals = append(totals, tt)
+		}
+		slices.SortFunc(totals, func(a, b telemetrydlg.ToolTotal) int {
+			if a.Cost == b.Cost {
+				return b.Calls - a.Calls
+			}
+			if a.Cost > b.Cost {
+				return -1
+			}
+			return 1
+		})
+		snap.ToolTotals = totals
+	}
+	return snap
 }
 
 // appModel represents the main application model that manages pages, dialogs, and UI state.
@@ -84,6 +150,8 @@ type appModel struct {
 	// QueryVersion instructs the TUI to query for the terminal version when it
 	// starts.
 	QueryVersion bool
+
+	telemetry telemetryState
 }
 
 // Init initializes the application model and returns initial commands.
@@ -154,6 +222,55 @@ func (a *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case mcp.EventToolsListChanged:
 			return a, handleMCPToolsEvent(context.Background(), msg.Payload.Name)
 		}
+	case pubsub.Event[telemetry.Event]:
+		a.telemetry.add(msg.Payload)
+		if a.dialog.ActiveDialogID() == telemetrydlg.TelemetryDialogID {
+			u, dialogCmd := a.dialog.Update(telemetrydlg.UpdateMsg{Snapshot: a.telemetry.snapshot(a.selectedSessionID)})
+			a.dialog = u.(dialogs.DialogCmp)
+			cmds = append(cmds, dialogCmd)
+		}
+		if s, ok := a.status.(status.StatusCmp); ok {
+			m := status.TelemetryMetrics{
+				TokensIn:  a.telemetry.tokensIn,
+				TokensOut: a.telemetry.tokensOut,
+				Cost:      a.telemetry.cost,
+				SessionID: msg.Payload.SessionID,
+			}
+			updated, statusCmd := s.Update(status.TelemetryMsg{TelemetryMetrics: m})
+			a.status = updated.(status.StatusCmp)
+			cmds = append(cmds, statusCmd)
+		}
+		return a, tea.Batch(cmds...)
+	case pluginsdlg.TogglePluginMsg:
+		desc, ok := a.app.Plugins.Get(msg.Name)
+		if msg.Enable && ok {
+			approved := true
+			if a.app.Permissions != nil {
+				approved = a.app.Permissions.Request(permission.CreatePermissionRequest{
+					SessionID:   a.selectedSessionID,
+					ToolCallID:  "plugin:" + desc.Name,
+					ToolName:    "plugin",
+					Action:      "enable",
+					Description: fmt.Sprintf("Enable plugin %s (sandbox=%s)", desc.Name, desc.Sandbox),
+					Path:        desc.Path,
+				})
+			}
+			if !approved {
+				if a.dialog.ActiveDialogID() == pluginsdlg.DialogID {
+					return a, util.CmdHandler(pluginsdlg.RefreshMsg{Plugins: a.app.Plugins.List()})
+				}
+				return a, util.ReportWarn("Plugin enable denied")
+			}
+		}
+		if msg.Enable {
+			a.app.Plugins.Enable(msg.Name)
+		} else {
+			a.app.Plugins.Disable(msg.Name)
+		}
+		if a.dialog.ActiveDialogID() == pluginsdlg.DialogID {
+			return a, util.CmdHandler(pluginsdlg.RefreshMsg{Plugins: a.app.Plugins.List()})
+		}
+		return a, nil
 
 	// Completions messages
 	case completions.OpenCompletionsMsg, completions.FilterCompletionsMsg,
@@ -261,6 +378,24 @@ func (a *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.status.ToggleFullHelp()
 		a.showingFullHelp = !a.showingFullHelp
 		return a, a.handleWindowResize(a.wWidth, a.wHeight)
+	case commands.OpenPermissionsListMsg:
+		perms := a.app.Permissions.Persistent()
+		return a, util.CmdHandler(dialogs.OpenDialogMsg{
+			Model: permissions.NewPermissionListCmp(perms),
+		})
+	case commands.OpenTelemetryDialogMsg:
+		return a, util.CmdHandler(dialogs.OpenDialogMsg{
+			Model: telemetrydlg.NewTelemetryDialogCmp(a.telemetry.snapshot(a.selectedSessionID)),
+		})
+	case commands.OpenFreshnessDialogMsg:
+		items := a.app.Freshness.Top(a.selectedSessionID, 30)
+		return a, util.CmdHandler(dialogs.OpenDialogMsg{
+			Model: freshnessdlg.NewFreshnessDialogCmp(items),
+		})
+	case commands.OpenPluginsDialogMsg:
+		return a, util.CmdHandler(dialogs.OpenDialogMsg{
+			Model: pluginsdlg.NewDialog(a.app.Plugins.List()),
+		})
 	// Model Switch
 	case models.ModelSelectedMsg:
 		if a.app.AgentCoordinator.IsBusy() {
