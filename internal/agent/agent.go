@@ -36,6 +36,7 @@ import (
 	"github.com/charmbracelet/crush/internal/history"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/crush/internal/ratelimit"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/stringext"
 	"github.com/charmbracelet/crush/internal/telemetry"
@@ -105,6 +106,10 @@ type sessionAgent struct {
 	messageQueue   *csync.Map[string, []SessionAgentCall]
 	activeRequests *csync.Map[string, context.CancelFunc]
 	toolTimers     *csync.Map[string, time.Time]
+
+	// rateLimiter enforces rate limits when configured
+	rateLimiter *ratelimit.Limiter
+	retryConfig *config.RetryConfig
 }
 
 type SessionAgentOptions struct {
@@ -143,7 +148,40 @@ func NewSessionAgent(
 		messageQueue:         csync.NewMap[string, []SessionAgentCall](),
 		activeRequests:       csync.NewMap[string, context.CancelFunc](),
 		toolTimers:           csync.NewMap[string, time.Time](),
+		rateLimiter:          createRateLimiter(opts.LargeModel.ModelCfg),
+		retryConfig:          opts.LargeModel.ModelCfg.Retry,
 	}
+}
+
+// createRateLimiter creates a rate limiter if rate limiting is configured.
+func createRateLimiter(modelCfg config.SelectedModel) *ratelimit.Limiter {
+	if modelCfg.RateLimiting == nil {
+		return nil
+	}
+
+	var rpm, tpm int64
+	if modelCfg.RateLimiting.RequestsPerMinute != nil {
+		rpm = *modelCfg.RateLimiting.RequestsPerMinute
+	}
+	if modelCfg.RateLimiting.TokensPerMinute != nil {
+		tpm = *modelCfg.RateLimiting.TokensPerMinute
+	}
+
+	if rpm == 0 && tpm == 0 {
+		return nil
+	}
+
+	return ratelimit.New(rpm, tpm)
+}
+
+// getMaxRetries returns the max retries value from retry config.
+// Returns nil if no retry config or max retries is not set (uses fantasy default).
+func (a *sessionAgent) getMaxRetries() *int {
+	if a.retryConfig == nil || a.retryConfig.MaxRetries == nil {
+		return nil
+	}
+	maxRetries := int(*a.retryConfig.MaxRetries)
+	return &maxRetries
 }
 
 func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
@@ -163,6 +201,13 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		existing = append(existing, call)
 		a.messageQueue.Set(call.SessionID, existing)
 		return nil, nil
+	}
+
+	// Apply rate limiting if configured
+	if a.rateLimiter != nil && a.rateLimiter.Enabled() {
+		if err := a.rateLimiter.Wait(ctx); err != nil {
+			return nil, fmt.Errorf("rate limiter: %w", err)
+		}
 	}
 
 	if len(a.tools) > 0 {
@@ -239,6 +284,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		PresencePenalty:  call.PresencePenalty,
 		TopK:             call.TopK,
 		FrequencyPenalty: call.FrequencyPenalty,
+		MaxRetries:       a.getMaxRetries(),
 		// Before each step create a new assistant message.
 		PrepareStep: func(callContext context.Context, options fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
 			prepared.Messages = options.Messages
@@ -342,7 +388,23 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			return a.messages.Update(genCtx, *currentAssistant)
 		},
 		OnRetry: func(err *fantasy.ProviderError, delay time.Duration) {
-			// TODO: implement
+			// Classify the error to determine the category
+			category := ClassifyError(err)
+
+			// Get user-friendly error message
+			userMsg := GetErrorMessage(err)
+
+			// Update error statistics
+			UpdateErrorStats(err)
+
+			// Log the retry attempt
+			slog.Info("API request retry",
+				"session_id", call.SessionID,
+				"error_category", category,
+				"error_message", err.Message,
+				"user_message", userMsg,
+				"retry_delay", delay.String(),
+			)
 		},
 		OnToolCall: func(tc fantasy.ToolCallContent) error {
 			toolCall := message.ToolCall{
@@ -622,6 +684,7 @@ func (a *sessionAgent) autoCompactSession(ctx context.Context, sess session.Sess
 		Prompt:          "Provide a detailed summary of our conversation above.",
 		Messages:        history,
 		ProviderOptions: providerOpts,
+		MaxRetries:      a.getMaxRetries(),
 		PrepareStep: func(callContext context.Context, options fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
 			prepared.Messages = options.Messages
 			if a.systemPromptPrefix != "" {
@@ -858,6 +921,7 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 		Prompt:          "Provide a detailed summary of our conversation above.",
 		Messages:        aiMsgs,
 		ProviderOptions: opts,
+		MaxRetries:      a.getMaxRetries(),
 		PrepareStep: func(callContext context.Context, options fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
 			prepared.Messages = options.Messages
 			if a.systemPromptPrefix != "" {
@@ -1034,7 +1098,8 @@ func (a *sessionAgent) generateTitle(ctx context.Context, session *session.Sessi
 	)
 
 	resp, err := agent.Stream(ctx, fantasy.AgentStreamCall{
-		Prompt: fmt.Sprintf("Generate a concise title for the following content:\n\n%s\n <think>\n\n</think>", prompt),
+		Prompt:     fmt.Sprintf("Generate a concise title for the following content:\n\n%s\n <think>\n\n</think>", prompt),
+		MaxRetries: a.getMaxRetries(),
 		PrepareStep: func(callContext context.Context, options fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
 			prepared.Messages = options.Messages
 			if a.systemPromptPrefix != "" {

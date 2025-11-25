@@ -80,6 +80,36 @@ type SelectedModel struct {
 
 	// Override provider specific options.
 	ProviderOptions map[string]any `json:"provider_options,omitempty" jsonschema:"description=Additional provider-specific options for the model"`
+
+	// Rate limiting configuration.
+	// When specified, enforces request and token rate limits.
+	RateLimiting *RateLimitingConfig `json:"rate_limiting,omitempty" jsonschema:"description=Rate limiting configuration for API requests"`
+
+	// Retry configuration.
+	// Controls retry behavior for failed requests.
+	Retry *RetryConfig `json:"retry,omitempty" jsonschema:"description=Retry configuration for failed API requests"`
+}
+
+// RateLimitingConfig defines rate limiting parameters.
+type RateLimitingConfig struct {
+	// Maximum requests per minute. If set, enforces strict rate limiting.
+	RequestsPerMinute *int64 `json:"requests_per_minute,omitempty" jsonschema:"description=Maximum API requests per minute,minimum=1,maximum=1000,example=60"`
+	// Maximum tokens per minute. If set, enforces strict rate limiting.
+	TokensPerMinute *int64 `json:"tokens_per_minute,omitempty" jsonschema:"description=Maximum tokens per minute,minimum=1000,maximum=1000000,example=100000"`
+}
+
+// RetryConfig defines retry behavior for failed requests.
+type RetryConfig struct {
+	// Maximum number of retry attempts.
+	MaxRetries *int64 `json:"max_retries,omitempty" jsonschema:"description=Maximum number of retry attempts,minimum=0,maximum=10,default=3,example=3"`
+	// Initial delay before first retry in milliseconds.
+	InitialDelay *int64 `json:"initial_delay,omitempty" jsonschema:"description=Initial retry delay in milliseconds,minimum=100,maximum=60000,default=1000,example=1000"`
+	// Multiplier for exponential backoff.
+	BackoffMultiplier *float64 `json:"backoff_multiplier,omitempty" jsonschema:"description=Exponential backoff multiplier,minimum=1.0,maximum=5.0,default=2.0,example=2.0"`
+	// Maximum delay between retries in milliseconds.
+	MaxDelay *int64 `json:"max_delay,omitempty" jsonschema:"description=Maximum retry delay in milliseconds,minimum=1000,maximum=300000,default=30000,example=30000"`
+	// Fallback models to use when primary model fails.
+	FallbackModels []string `json:"fallback_models,omitempty" jsonschema:"description=List of fallback model names to try when primary model fails,example=[gpt-4o-mini,gpt-3.5-turbo]"`
 }
 
 type ProviderConfig struct {
