@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/env"
+	"github.com/stretchr/testify/require"
 )
 
 func TestClient(t *testing.T) {
@@ -54,4 +55,39 @@ func TestClient(t *testing.T) {
 		// Expected to fail with echo command
 		t.Logf("Close failed as expected with dummy command: %v", err)
 	}
+}
+
+func TestResolveLSPConfig(t *testing.T) {
+	resolver := config.NewEnvironmentVariableResolver(env.NewFromMap(map[string]string{
+		"CMD":    "echo",
+		"ARG":    "world",
+		"ENVVAR": "/custom/path",
+	}))
+
+	cfg := config.LSPConfig{
+		Command: "$CMD",
+		Args:    []string{"hello", "$ARG"},
+		Env: map[string]string{
+			"CUSTOM_PATH": "$ENVVAR",
+		},
+	}
+
+	resolved, err := resolveLSPConfig(cfg, resolver)
+	require.NoError(t, err)
+	require.Equal(t, "echo", resolved.command)
+	require.Equal(t, []string{"hello", "world"}, resolved.args)
+	require.Equal(t, map[string]string{"CUSTOM_PATH": "/custom/path"}, resolved.env)
+}
+
+func TestResolveLSPConfigEnvError(t *testing.T) {
+	resolver := config.NewEnvironmentVariableResolver(env.NewFromMap(nil))
+	cfg := config.LSPConfig{
+		Command: "echo",
+		Env: map[string]string{
+			"CUSTOM_PATH": "$MISSING",
+		},
+	}
+
+	_, err := resolveLSPConfig(cfg, resolver)
+	require.Error(t, err)
 }

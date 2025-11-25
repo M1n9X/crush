@@ -47,6 +47,46 @@ type Client struct {
 	serverState atomic.Value
 }
 
+type resolvedLSPConfig struct {
+	command string
+	args    []string
+	env     map[string]string
+}
+
+func resolveLSPConfig(cfg config.LSPConfig, resolver config.VariableResolver) (resolvedLSPConfig, error) {
+	command, err := resolver.ResolveValue(cfg.Command)
+	if err != nil {
+		return resolvedLSPConfig{}, fmt.Errorf("invalid lsp command: %w", err)
+	}
+
+	args := make([]string, len(cfg.Args))
+	for i, arg := range cfg.Args {
+		resolvedArg, err := resolver.ResolveValue(arg)
+		if err != nil {
+			return resolvedLSPConfig{}, fmt.Errorf("invalid lsp arg %d: %w", i, err)
+		}
+		args[i] = resolvedArg
+	}
+
+	var envVars map[string]string
+	if len(cfg.Env) > 0 {
+		envVars = make(map[string]string, len(cfg.Env))
+		for key, value := range cfg.Env {
+			resolvedValue, err := resolver.ResolveValue(value)
+			if err != nil {
+				return resolvedLSPConfig{}, fmt.Errorf("invalid lsp env %s: %w", key, err)
+			}
+			envVars[key] = resolvedValue
+		}
+	}
+
+	return resolvedLSPConfig{
+		command: command,
+		args:    args,
+		env:     envVars,
+	}, nil
+}
+
 // New creates a new LSP client using the powernap implementation.
 func New(ctx context.Context, name string, config config.LSPConfig, resolver config.VariableResolver) (*Client, error) {
 	// Convert working directory to file URI
@@ -57,21 +97,17 @@ func New(ctx context.Context, name string, config config.LSPConfig, resolver con
 
 	rootURI := string(protocol.URIFromPath(workDir))
 
-	command, err := resolver.ResolveValue(config.Command)
+	resolvedCfg, err := resolveLSPConfig(config, resolver)
 	if err != nil {
-		return nil, fmt.Errorf("invalid lsp command: %w", err)
+		return nil, err
 	}
 
 	// Create powernap client config
 	clientConfig := powernap.ClientConfig{
-		Command: home.Long(command),
-		Args:    config.Args,
-		RootURI: rootURI,
-		Environment: func() map[string]string {
-			env := make(map[string]string)
-			maps.Copy(env, config.Env)
-			return env
-		}(),
+		Command:     home.Long(resolvedCfg.command),
+		Args:        resolvedCfg.args,
+		RootURI:     rootURI,
+		Environment: resolvedCfg.env,
 		Settings:    config.Options,
 		InitOptions: config.InitOptions,
 		WorkspaceFolders: []protocol.WorkspaceFolder{
