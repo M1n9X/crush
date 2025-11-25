@@ -60,6 +60,7 @@ type editorCmp struct {
 	deleteMode         bool
 	readyPlaceholder   string
 	workingPlaceholder string
+	history            promptHistory
 
 	keyMap EditorKeyMap
 
@@ -155,6 +156,8 @@ func (m *editorCmp) send() tea.Cmd {
 	if value == "" {
 		return nil
 	}
+
+	m.history.record(value)
 
 	// Change the placeholder when sending a new message.
 	m.randomizePlaceholders()
@@ -262,7 +265,10 @@ func (m *editorCmp) Update(msg tea.Msg) (util.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyPressMsg:
 		cur := m.textarea.Cursor()
-		curIdx := m.textarea.Width()*cur.Y + cur.X
+		curIdx := 0
+		if cur != nil {
+			curIdx = m.textarea.Width()*cur.Y + cur.X
+		}
 		switch {
 		// Open command palette when "/" is pressed on empty prompt
 		case msg.String() == "/" && len(strings.TrimSpace(m.textarea.Value())) == 0:
@@ -311,6 +317,25 @@ func (m *editorCmp) Update(msg tea.Msg) (util.Model, tea.Cmd) {
 		if key.Matches(msg, DeleteKeyMaps.Escape) {
 			m.deleteMode = false
 			return m, nil
+		}
+		if key.Matches(msg, m.keyMap.HistoryPrev) || key.Matches(msg, m.keyMap.HistoryNext) {
+			if m.history.shouldHandleNavigation(m.textarea.Value(), cur) {
+				var value string
+				var ok bool
+				switch {
+				case key.Matches(msg, m.keyMap.HistoryPrev):
+					value, ok = m.history.previous()
+				case key.Matches(msg, m.keyMap.HistoryNext):
+					value, ok = m.history.next()
+				}
+				if ok {
+					m.attachments = nil
+					m.textarea.SetValue(value)
+					m.textarea.MoveToBegin()
+					cmds = append(cmds, util.CmdHandler(completions.CloseCompletionsMsg{}))
+					return m, tea.Batch(cmds...)
+				}
+			}
 		}
 		if key.Matches(msg, m.keyMap.Newline) {
 			m.textarea.InsertRune('\n')
@@ -534,7 +559,33 @@ func (c *editorCmp) Bindings() []key.Binding {
 // TODO: most likely we do not need to have the session here
 // we need to move some functionality to the page level
 func (c *editorCmp) SetSession(session session.Session) tea.Cmd {
+	if c.session.ID == session.ID {
+		return nil
+	}
+
 	c.session = session
+	c.history.clear()
+
+	var allEntries []string
+
+	// Load persistent history
+	if c.history.manager != nil {
+		pEntries, _ := c.history.manager.GetProjectHistory(c.history.project)
+		allEntries = append(allEntries, pEntries...)
+	}
+
+	if session.ID == "" {
+		c.history.setEntries(allEntries)
+		return nil
+	}
+
+	entries, err := c.sessionHistoryEntries(session.ID)
+	if err != nil {
+		return util.ReportError(err)
+	}
+
+	allEntries = append(allEntries, entries...)
+	c.history.setEntries(allEntries)
 	return nil
 }
 
@@ -544,6 +595,29 @@ func (c *editorCmp) IsCompletionsOpen() bool {
 
 func (c *editorCmp) HasAttachments() bool {
 	return len(c.attachments) > 0
+}
+
+func (c *editorCmp) sessionHistoryEntries(sessionID string) ([]string, error) {
+	if c.app == nil || c.app.Messages == nil {
+		return nil, nil
+	}
+	msgs, err := c.app.Messages.List(context.Background(), sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	entries := make([]string, 0, len(msgs))
+	for _, msg := range msgs {
+		if msg.Role != message.User || msg.IsSummaryMessage {
+			continue
+		}
+		text := strings.TrimSpace(msg.Content().Text)
+		if text == "" {
+			continue
+		}
+		entries = append(entries, text)
+	}
+	return entries, nil
 }
 
 func normalPromptFunc(info textarea.PromptInfo) string {
@@ -585,6 +659,7 @@ func New(app *app.App) Editor {
 		app:      app,
 		textarea: ta,
 		keyMap:   DefaultEditorKeyMap(),
+		history:  newPromptHistory(app.Config().WorkingDir()),
 	}
 	e.setEditorPrompt()
 
