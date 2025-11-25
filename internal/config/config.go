@@ -620,6 +620,8 @@ func allToolNames() []string {
 		"sourcegraph",
 		"view",
 		"write",
+		"memory_read",
+		"memory_write",
 	}
 }
 
@@ -632,7 +634,7 @@ func resolveAllowedTools(allTools []string, disabledTools []string) []string {
 }
 
 func resolveReadOnlyTools(tools []string) []string {
-	readOnlyTools := []string{"glob", "grep", "ls", "sourcegraph", "view", "semantic_symbol_overview", "semantic_find_symbol", "semantic_find_references"}
+	readOnlyTools := []string{"glob", "grep", "ls", "sourcegraph", "view", "semantic_symbol_overview", "semantic_find_symbol", "semantic_find_references", "memory_read"}
 	// filter to only include tools that are in allowedtools (include mode)
 	return filterSlice(tools, readOnlyTools, true)
 }

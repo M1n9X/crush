@@ -29,6 +29,7 @@ import (
 	"github.com/charmbracelet/crush/internal/history"
 	"github.com/charmbracelet/crush/internal/log"
 	"github.com/charmbracelet/crush/internal/lsp"
+	"github.com/charmbracelet/crush/internal/memory"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/plugin"
@@ -56,6 +57,7 @@ type App struct {
 
 	Telemetry   *telemetry.Recorder
 	Freshness   *freshness.Service
+	Memory      *memory.Service
 	Plugins     *plugin.Host
 	CapRegistry *capability.Registry
 
@@ -89,6 +91,7 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 	fresh := freshness.New()
 	freshnessPath := filepath.Join(cfg.Options.DataDirectory, "freshness.json")
 	_ = fresh.Load(freshnessPath)
+	mem := memory.NewService(cfg.Options.DataDirectory)
 	pluginHost := plugin.NewHost(plugin.PersistentPath(cfg.Options.DataDirectory, cfg.WorkingDir()), cfg.WorkingDir())
 	capRegistry := capability.NewRegistry()
 	appRegistrars := runtime.DefaultRegistrarsV2()
@@ -110,6 +113,7 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 		Permissions: permission.NewPermissionService(cfg.WorkingDir(), cfg.Options.DataDirectory, skipPermissionsRequests, allowedTools),
 		Telemetry:   telemetryRecorder,
 		Freshness:   fresh,
+		Memory:      mem,
 		Plugins:     pluginHost,
 		CapRegistry: capRegistry,
 		LSPClients:  csync.NewMap[string, *lsp.Client](),
@@ -423,6 +427,7 @@ func (app *App) InitCoderAgent(ctx context.Context) error {
 		app.Freshness,
 		app.CapRegistry,
 		app.LSPClients,
+		app.Memory,
 	)
 	if err != nil {
 		slog.Error("Failed to create coder agent", "err", err)

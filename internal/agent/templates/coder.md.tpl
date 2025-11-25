@@ -338,9 +338,14 @@ Diagnostics (lint/typecheck) included in tool output.
 </lsp>
 {{end}}
 
-{{if .ContextFiles}}
+{{if or .ContextFiles .MemoryFiles}}
 <memory>
 {{range .ContextFiles}}
+<file path="{{.Path}}">
+{{.Content}}
+</file>
+{{end}}
+{{range .MemoryFiles}}
 <file path="{{.Path}}">
 {{.Content}}
 </file>

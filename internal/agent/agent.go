@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -48,8 +49,12 @@ var titlePrompt []byte
 //go:embed templates/summary.md
 var summaryPrompt []byte
 
+//go:embed templates/auto_compact_summary.md
+var autoCompactSummaryPrompt []byte
+
 const (
 	autoCompactThresholdRatio = 0.92
+	preCompactWarningRatio    = 0.9
 	maxRecoveredFiles         = 5
 	maxTokensPerRecoveredFile = 10_000
 	maxTotalRecoveredTokens   = 50_000
@@ -93,6 +98,8 @@ type sessionAgent struct {
 	smallModel           Model
 	systemPromptPrefix   string
 	systemPrompt         string
+	systemPromptBuilder  func() (string, error)
+	systemPromptMu       sync.RWMutex
 	tools                []fantasy.AgentTool
 	sessions             session.Service
 	messages             message.Service
@@ -103,9 +110,10 @@ type sessionAgent struct {
 	telemetry            *telemetry.Recorder
 	freshness            *freshness.Service
 
-	messageQueue   *csync.Map[string, []SessionAgentCall]
-	activeRequests *csync.Map[string, context.CancelFunc]
-	toolTimers     *csync.Map[string, time.Time]
+	messageQueue     *csync.Map[string, []SessionAgentCall]
+	activeRequests   *csync.Map[string, context.CancelFunc]
+	toolTimers       *csync.Map[string, time.Time]
+	precompactWarned *csync.Map[string, bool]
 
 	// rateLimiter enforces rate limits when configured
 	rateLimiter *ratelimit.Limiter
@@ -117,6 +125,7 @@ type SessionAgentOptions struct {
 	SmallModel           Model
 	SystemPromptPrefix   string
 	SystemPrompt         string
+	SystemPromptBuilder  func() (string, error)
 	DisableAutoSummarize bool
 	IsYolo               bool
 	Sessions             session.Service
@@ -136,6 +145,7 @@ func NewSessionAgent(
 		smallModel:           opts.SmallModel,
 		systemPromptPrefix:   opts.SystemPromptPrefix,
 		systemPrompt:         opts.SystemPrompt,
+		systemPromptBuilder:  opts.SystemPromptBuilder,
 		sessions:             opts.Sessions,
 		messages:             opts.Messages,
 		disableAutoSummarize: opts.DisableAutoSummarize,
@@ -148,6 +158,7 @@ func NewSessionAgent(
 		messageQueue:         csync.NewMap[string, []SessionAgentCall](),
 		activeRequests:       csync.NewMap[string, context.CancelFunc](),
 		toolTimers:           csync.NewMap[string, time.Time](),
+		precompactWarned:     csync.NewMap[string, bool](),
 		rateLimiter:          createRateLimiter(opts.LargeModel.ModelCfg),
 		retryConfig:          opts.LargeModel.ModelCfg.Retry,
 	}
@@ -215,9 +226,12 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		a.tools[len(a.tools)-1].SetProviderOptions(a.getCacheControlOptions())
 	}
 
+	a.refreshSystemPrompt()
+	systemPrompt := a.currentSystemPrompt()
+
 	agent := fantasy.NewAgent(
 		a.largeModel.Model,
-		fantasy.WithSystemPrompt(a.systemPrompt),
+		fantasy.WithSystemPrompt(systemPrompt),
 		fantasy.WithTools(a.tools...),
 	)
 
@@ -640,18 +654,37 @@ func (a *sessionAgent) maybeAutoCompact(ctx context.Context, sess session.Sessio
 	}
 
 	usedTokens := sess.PromptTokens + sess.CompletionTokens
-	if float64(usedTokens) < float64(contextWindow)*autoCompactThresholdRatio {
+	percentUsed := float64(usedTokens) / float64(contextWindow)
+	if percentUsed >= preCompactWarningRatio && percentUsed < autoCompactThresholdRatio {
+		if warned, _ := a.precompactWarned.Get(sess.ID); !warned {
+			notice := fmt.Sprintf("Context nearly full (%.1f%% of %d-token window used). Auto-compaction will trigger soon.", percentUsed*100, contextWindow)
+			if msg, err := a.messages.Create(ctx, sess.ID, message.CreateMessageParams{
+				Role: message.User,
+				Parts: []message.ContentPart{
+					message.TextContent{Text: notice},
+				},
+			}); err == nil {
+				msgs = append(msgs, msg)
+				a.precompactWarned.Set(sess.ID, true)
+			} else {
+				slog.Debug("failed to add pre-compaction warning", "err", err)
+			}
+		}
+	}
+	if percentUsed < autoCompactThresholdRatio {
 		return sess, msgs, false, nil
 	}
 
-	compactedSession, compactedMsgs, err := a.autoCompactSession(ctx, sess, msgs, providerOpts)
+	compactedSession, compactedMsgs, err := a.autoCompactSession(ctx, sess, msgs, providerOpts, usedTokens, contextWindow)
 	if err != nil {
-		return sess, msgs, false, err
+		slog.Warn("auto-compact failed; continuing without compaction", "error", err)
+		return sess, msgs, false, nil
 	}
+	a.precompactWarned.Del(sess.ID)
 	return compactedSession, compactedMsgs, true, nil
 }
 
-func (a *sessionAgent) autoCompactSession(ctx context.Context, sess session.Session, msgs []message.Message, providerOpts fantasy.ProviderOptions) (session.Session, []message.Message, error) {
+func (a *sessionAgent) autoCompactSession(ctx context.Context, sess session.Session, msgs []message.Message, providerOpts fantasy.ProviderOptions, usedTokens, contextWindow int64) (session.Session, []message.Message, error) {
 	if len(msgs) == 0 {
 		return sess, msgs, nil
 	}
@@ -660,8 +693,8 @@ func (a *sessionAgent) autoCompactSession(ctx context.Context, sess session.Sess
 		providerOpts = fantasy.ProviderOptions{}
 	}
 
+	percentUsed := (float64(usedTokens) / float64(contextWindow)) * 100
 	history, _ := a.preparePrompt(msgs)
-	compactionNotice := fmt.Sprintf("Context automatically compressed (%.0f%% of window used). Preserved summary and recent files.", autoCompactThresholdRatio*100)
 
 	genCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -677,11 +710,11 @@ func (a *sessionAgent) autoCompactSession(ctx context.Context, sess session.Sess
 	}
 
 	agent := fantasy.NewAgent(a.largeModel.Model,
-		fantasy.WithSystemPrompt(string(summaryPrompt)),
+		fantasy.WithSystemPrompt(string(autoCompactSummaryPrompt)),
 	)
 
 	resp, err := agent.Stream(genCtx, fantasy.AgentStreamCall{
-		Prompt:          "Provide a detailed summary of our conversation above.",
+		Prompt:          "Compress the conversation using the required sections and preserve actionable details.",
 		Messages:        history,
 		ProviderOptions: providerOpts,
 		MaxRetries:      a.getMaxRetries(),
@@ -750,21 +783,20 @@ func (a *sessionAgent) autoCompactSession(ctx context.Context, sess session.Sess
 		return sess, msgs, err
 	}
 
+	_, recoveredPaths, err := a.recoverRecentFiles(ctx, sess.ID)
+	if err != nil {
+		slog.Debug("failed to recover files after compaction", "err", err)
+	}
+
+	summaryPreview := previewText(summaryMessage.Content().Text, 240)
+	compactionNotice := formatCompactionNotice(percentUsed, contextWindow, usedTokens, summaryPreview, recoveredPaths)
+
 	_, _ = a.messages.Create(ctx, sess.ID, message.CreateMessageParams{
 		Role: message.User,
 		Parts: []message.ContentPart{
 			message.TextContent{Text: compactionNotice},
 		},
 	})
-
-	if recovered, err := a.recoverRecentFiles(ctx, sess.ID); err == nil {
-		for _, m := range recovered {
-			// Already created inside recoverRecentFiles.
-			history = append(history, m.ToAIMessage()...)
-		}
-	} else {
-		slog.Debug("failed to recover files after compaction", "err", err)
-	}
 
 	updatedSess, err := a.sessions.Get(ctx, sess.ID)
 	if err != nil {
@@ -777,12 +809,36 @@ func (a *sessionAgent) autoCompactSession(ctx context.Context, sess session.Sess
 	return updatedSess, updatedMsgs, nil
 }
 
-func (a *sessionAgent) recoverRecentFiles(ctx context.Context, sessionID string) ([]message.Message, error) {
+func (a *sessionAgent) recoverRecentFiles(ctx context.Context, sessionID string) ([]message.Message, []string, error) {
+	allowPath := func(p string) bool {
+		if p == "" {
+			return false
+		}
+		absPath, err := filepath.Abs(p)
+		if err != nil {
+			return false
+		}
+		if a.workingDir == "" {
+			return true
+		}
+		absWD, err := filepath.Abs(a.workingDir)
+		if err != nil || absWD == "" {
+			return true
+		}
+		rel, err := filepath.Rel(absWD, absPath)
+		if err != nil {
+			return false
+		}
+		return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	}
+
 	var paths []string
 	if a.freshness != nil {
 		top := a.freshness.Top(sessionID, maxRecoveredFiles)
 		for _, meta := range top {
-			paths = append(paths, meta.Path)
+			if allowPath(meta.Path) {
+				paths = append(paths, meta.Path)
+			}
 		}
 	}
 	var historyFiles []history.File
@@ -809,17 +865,21 @@ func (a *sessionAgent) recoverRecentFiles(ctx context.Context, sessionID string)
 		if _, ok := pathSet[p]; ok {
 			continue
 		}
+		if !allowPath(p) {
+			continue
+		}
 		if content, err := os.ReadFile(p); err == nil {
 			historyFiles = append(historyFiles, history.File{Path: p, Content: string(content)})
 		}
 	}
 	if len(historyFiles) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	slog.Info("recovering context", "session", sessionID, "files", len(historyFiles))
 
 	var created []message.Message
 	var totalTokens int
+	var recoveredPaths []string
 	for i, f := range historyFiles {
 		if i >= maxRecoveredFiles {
 			break
@@ -842,12 +902,12 @@ func (a *sessionAgent) recoverRecentFiles(ctx context.Context, sessionID string)
 			},
 		})
 		if createErr != nil {
-			return created, createErr
+			return created, recoveredPaths, createErr
 		}
 		created = append(created, msg)
-
+		recoveredPaths = append(recoveredPaths, f.Path)
 	}
-	return created, nil
+	return created, recoveredPaths, nil
 }
 
 func truncateByTokens(content string, maxTokens int) (string, int, bool) {
@@ -877,6 +937,33 @@ func boolSuffix(ok bool, suffix string) string {
 		return suffix
 	}
 	return ""
+}
+
+func previewText(text string, limit int) string {
+	text = strings.TrimSpace(text)
+	runes := []rune(text)
+	if len(runes) == 0 {
+		return ""
+	}
+	if len(runes) <= limit {
+		return text
+	}
+	return string(runes[:limit]) + "..."
+}
+
+func formatCompactionNotice(percentUsed float64, contextWindow, usedTokens int64, preview string, recoveredPaths []string) string {
+	notice := fmt.Sprintf("Context automatically compressed (%.1f%% of %d-token window used, %d tokens).", percentUsed, contextWindow, usedTokens)
+	if preview != "" {
+		notice += "\nSummary preview: " + preview
+	}
+	if len(recoveredPaths) > 0 {
+		var pretty []string
+		for _, p := range recoveredPaths {
+			pretty = append(pretty, fsext.PrettyPath(p))
+		}
+		notice += "\nRecovered files: " + strings.Join(pretty, ", ")
+	}
+	return notice
 }
 
 func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fantasy.ProviderOptions) error {
@@ -999,6 +1086,26 @@ func (a *sessionAgent) getCacheControlOptions() fantasy.ProviderOptions {
 			CacheControl: anthropic.CacheControl{Type: "ephemeral"},
 		},
 	}
+}
+
+func (a *sessionAgent) refreshSystemPrompt() {
+	if a.systemPromptBuilder == nil {
+		return
+	}
+	prompt, err := a.systemPromptBuilder()
+	if err != nil {
+		slog.Debug("failed to refresh system prompt", "error", err)
+		return
+	}
+	a.systemPromptMu.Lock()
+	a.systemPrompt = prompt
+	a.systemPromptMu.Unlock()
+}
+
+func (a *sessionAgent) currentSystemPrompt() string {
+	a.systemPromptMu.RLock()
+	defer a.systemPromptMu.RUnlock()
+	return a.systemPrompt
 }
 
 func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentCall) (message.Message, error) {

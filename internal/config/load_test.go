@@ -469,7 +469,7 @@ func TestConfig_setupAgentsWithNoDisabledTools(t *testing.T) {
 
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)
-	assert.Equal(t, []string{"semantic_symbol_overview", "semantic_find_symbol", "semantic_find_references", "glob", "grep", "ls", "sourcegraph", "view"}, taskAgent.AllowedTools)
+	assert.Equal(t, []string{"semantic_symbol_overview", "semantic_find_symbol", "semantic_find_references", "glob", "grep", "ls", "sourcegraph", "view", "memory_read"}, taskAgent.AllowedTools)
 }
 
 func TestConfig_setupAgentsWithDisabledTools(t *testing.T) {
@@ -510,11 +510,13 @@ func TestConfig_setupAgentsWithDisabledTools(t *testing.T) {
 		"sourcegraph",
 		"view",
 		"write",
+		"memory_read",
+		"memory_write",
 	}, coderAgent.AllowedTools)
 
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)
-	assert.Equal(t, []string{"semantic_symbol_overview", "semantic_find_symbol", "semantic_find_references", "glob", "ls", "sourcegraph", "view"}, taskAgent.AllowedTools)
+	assert.Equal(t, []string{"semantic_symbol_overview", "semantic_find_symbol", "semantic_find_references", "glob", "ls", "sourcegraph", "view", "memory_read"}, taskAgent.AllowedTools)
 }
 
 func TestConfig_setupAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
@@ -554,11 +556,13 @@ func TestConfig_setupAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
 		"fetch",
 		"agentic_fetch",
 		"write",
+		"memory_read",
+		"memory_write",
 	}, coderAgent.AllowedTools)
 
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)
-	assert.Equal(t, []string{}, taskAgent.AllowedTools)
+	assert.Equal(t, []string{"memory_read"}, taskAgent.AllowedTools)
 }
 
 func TestConfig_configureProvidersWithDisabledProvider(t *testing.T) {

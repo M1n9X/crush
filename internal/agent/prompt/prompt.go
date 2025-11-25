@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -23,6 +24,7 @@ type Prompt struct {
 	now        func() time.Time
 	platform   string
 	workingDir string
+	memory     func() ([]ContextFile, error)
 }
 
 type PromptDat struct {
@@ -35,6 +37,7 @@ type PromptDat struct {
 	Date         string
 	GitStatus    string
 	ContextFiles []ContextFile
+	MemoryFiles  []ContextFile
 }
 
 type ContextFile struct {
@@ -59,6 +62,12 @@ func WithPlatform(platform string) Option {
 func WithWorkingDir(workingDir string) Option {
 	return func(p *Prompt) {
 		p.workingDir = workingDir
+	}
+}
+
+func WithMemoryLoader(loader func() ([]ContextFile, error)) Option {
+	return func(p *Prompt) {
+		p.memory = loader
 	}
 }
 
@@ -182,6 +191,15 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, cfg con
 
 	for _, contextFiles := range files {
 		data.ContextFiles = append(data.ContextFiles, contextFiles...)
+	}
+
+	if p.memory != nil {
+		memFiles, err := p.memory()
+		if err != nil {
+			slog.Debug("failed to load memory files", "error", err)
+		} else {
+			data.MemoryFiles = memFiles
+		}
 	}
 	return data, nil
 }

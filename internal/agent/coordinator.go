@@ -25,6 +25,7 @@ import (
 	"github.com/charmbracelet/crush/internal/history"
 	"github.com/charmbracelet/crush/internal/log"
 	"github.com/charmbracelet/crush/internal/lsp"
+	"github.com/charmbracelet/crush/internal/memory"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/session"
@@ -66,6 +67,7 @@ type coordinator struct {
 	history      history.Service
 	telemetry    *telemetry.Recorder
 	freshness    *freshness.Service
+	memory       *memory.Service
 	lspClients   *csync.Map[string, *lsp.Client]
 	capabilities *capability.Registry
 
@@ -88,6 +90,7 @@ func NewCoordinator(
 	freshness *freshness.Service,
 	registry *capability.Registry,
 	lspClients *csync.Map[string, *lsp.Client],
+	mem *memory.Service,
 ) (Coordinator, error) {
 	c := &coordinator{
 		cfg:          cfg,
@@ -97,6 +100,7 @@ func NewCoordinator(
 		history:      history,
 		telemetry:    telemetry,
 		freshness:    freshness,
+		memory:       mem,
 		capabilities: registry,
 		lspClients:   lspClients,
 		agents:       make(map[string]SessionAgent),
@@ -122,7 +126,10 @@ func NewCoordinator(
 	}
 
 	// TODO: make this dynamic when we support multiple agents
-	prompt, err := coderPrompt(prompt.WithWorkingDir(c.cfg.WorkingDir()))
+	prompt, err := coderPrompt(
+		prompt.WithWorkingDir(c.cfg.WorkingDir()),
+		prompt.WithMemoryLoader(c.memoryLoader(agentCfg.ID)),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -134,6 +141,30 @@ func NewCoordinator(
 	c.currentAgent = agent
 	c.agents[config.AgentCoder] = agent
 	return c, nil
+}
+
+func (c *coordinator) memoryLoader(agentID string) func() ([]prompt.ContextFile, error) {
+	return func() ([]prompt.ContextFile, error) {
+		if c.memory == nil {
+			return nil, nil
+		}
+		entries, err := c.memory.List(agentID)
+		if err != nil {
+			return nil, err
+		}
+		files := make([]prompt.ContextFile, 0, len(entries))
+		for _, entry := range entries {
+			content := entry.Content
+			if entry.Truncated {
+				content += "\n\n(Note: truncated memory entry)"
+			}
+			files = append(files, prompt.ContextFile{
+				Path:    entry.Path,
+				Content: content,
+			})
+		}
+		return files, nil
+	}
 }
 
 // Run implements Coordinator.
@@ -392,7 +423,13 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 		return nil, err
 	}
 
-	systemPrompt, err := prompt.Build(ctx, large.Model.Provider(), large.Model.Model(), *c.cfg)
+	buildSystemPrompt := func() (string, error) {
+		// Use a background context so prompt building (including memory reads)
+		// is resilient to request cancellations.
+		return prompt.Build(context.Background(), large.Model.Provider(), large.Model.Model(), *c.cfg)
+	}
+
+	systemPrompt, err := buildSystemPrompt()
 	if err != nil {
 		return nil, err
 	}
@@ -403,6 +440,7 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 		SmallModel:           small,
 		SystemPromptPrefix:   largeProviderCfg.SystemPromptPrefix,
 		SystemPrompt:         systemPrompt,
+		SystemPromptBuilder:  buildSystemPrompt,
 		DisableAutoSummarize: c.cfg.Options.DisableAutoSummarize,
 		IsYolo:               c.permissions.SkipRequests(),
 		Sessions:             c.sessions,
@@ -474,6 +512,8 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 		tools.NewViewTool(c.lspClients, c.permissions, c.cfg.WorkingDir()),
 		tools.NewWriteTool(c.lspClients, c.permissions, c.history, c.cfg.WorkingDir()),
 		tools.NewClaudeCodeTool(c.permissions, c.cfg.WorkingDir()),
+		tools.NewMemoryReadTool(agent.ID, c.memory, c.freshness),
+		tools.NewMemoryWriteTool(agent.ID, c.memory, c.freshness, c.history),
 	)
 
 	if len(c.cfg.LSP) > 0 {
