@@ -59,6 +59,7 @@ github.com/charmbracelet/fang v0.4.4
 	github.com/tidwall/gjson v1.18.0
 	github.com/tidwall/sjson v1.2.5
 	github.com/zeebo/xxh3 v1.0.2
+	golang.org/x/mod v0.30.0
 	golang.org/x/net v0.47.0
 	golang.org/x/sync v0.18.0
 	golang.org/x/text v0.31.0
