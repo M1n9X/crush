@@ -1,4 +1,4 @@
-package semantic
+package lspsymbols
 
 import (
 	"cmp"
@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -63,6 +64,7 @@ type findOptions struct {
 	includeKinds  map[protocol.SymbolKind]struct{}
 	excludeKinds  map[protocol.SymbolKind]struct{}
 	substring     bool
+	isRegex       bool
 	maxAnswerChar int
 }
 
@@ -105,7 +107,7 @@ func (r *Retriever) SymbolOverview(ctx context.Context, path string, maxAnswerCh
 	return r.marshalWithLimit(results, maxAnswerChars)
 }
 
-func (r *Retriever) FindSymbols(ctx context.Context, namePathPattern string, path string, depth int, includeBody bool, includeKinds, excludeKinds []int, substring bool, maxResults int, maxAnswerChars int) (string, error) {
+func (r *Retriever) FindSymbols(ctx context.Context, namePathPattern string, path string, depth int, includeBody bool, includeKinds, excludeKinds []int, substring bool, isRegex bool, maxResults int, maxAnswerChars int) (string, error) {
 	if namePathPattern == "" {
 		return "", fmt.Errorf("name_path_pattern is required")
 	}
@@ -115,8 +117,11 @@ func (r *Retriever) FindSymbols(ctx context.Context, namePathPattern string, pat
 		return "", err
 	}
 
-	matcher := newNamePathMatcher(namePathPattern, substring)
-	opts := r.convertOptions(depth, includeBody, includeKinds, excludeKinds, substring, maxAnswerChars)
+	matcher, err := newNamePathMatcher(namePathPattern, substring, isRegex)
+	if err != nil {
+		return "", err
+	}
+	opts := r.convertOptions(depth, includeBody, includeKinds, excludeKinds, substring, isRegex, maxAnswerChars)
 
 	var symbols []Symbol
 	truncated := false
@@ -274,7 +279,10 @@ func (r *Retriever) findDocumentSymbol(ctx context.Context, namePath string, abs
 		return protocol.DocumentSymbol{}, nil, nil, err
 	}
 
-	matcher := newNamePathMatcher(namePath, false)
+	matcher, err := newNamePathMatcher(namePath, false, false)
+	if err != nil {
+		return protocol.DocumentSymbol{}, nil, nil, err
+	}
 	var target protocol.DocumentSymbol
 	var targetNameParts []string
 	var found bool
@@ -498,11 +506,12 @@ func (r *Retriever) marshalWithLimit(v any, maxAnswerChars int) (string, error) 
 	return string(data), nil
 }
 
-func (r *Retriever) convertOptions(depth int, includeBody bool, includeKinds, excludeKinds []int, substring bool, maxAnswerChars int) findOptions {
+func (r *Retriever) convertOptions(depth int, includeBody bool, includeKinds, excludeKinds []int, substring bool, isRegex bool, maxAnswerChars int) findOptions {
 	opts := findOptions{
 		depth:         depth,
 		includeBody:   includeBody,
 		substring:     substring,
+		isRegex:       isRegex,
 		maxAnswerChar: maxAnswerChars,
 	}
 	if len(includeKinds) > 0 {
@@ -761,13 +770,24 @@ type namePathMatcher struct {
 	substring     bool
 	overloadIdx   *int
 	withSignature bool
+	regex         *regexp.Regexp
 }
 
-func newNamePathMatcher(pattern string, substring bool) namePathMatcher {
+func newNamePathMatcher(pattern string, substring bool, isRegex bool) (namePathMatcher, error) {
+	if isRegex {
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			return namePathMatcher{}, fmt.Errorf("invalid regex: %w", err)
+		}
+		return namePathMatcher{
+			regex: re,
+		}, nil
+	}
+
 	raw := pattern
 	trimmed := strings.Trim(pattern, "/")
 	if trimmed == "" {
-		return namePathMatcher{patternParts: []string{}, substring: substring}
+		return namePathMatcher{patternParts: []string{}, substring: substring}, nil
 	}
 
 	parts := strings.Split(trimmed, "/")
@@ -791,10 +811,14 @@ func newNamePathMatcher(pattern string, substring bool) namePathMatcher {
 		substring:     substring,
 		overloadIdx:   overload,
 		withSignature: withSig,
-	}
+	}, nil
 }
 
 func (m namePathMatcher) matches(nameParts []string, overloadIdx *int, signature string) bool {
+	if m.regex != nil {
+		return m.regex.MatchString(strings.Join(nameParts, "/"))
+	}
+
 	if len(m.patternParts) == 0 {
 		return false
 	}

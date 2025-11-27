@@ -13,34 +13,34 @@ import (
 	"github.com/charmbracelet/crush/internal/history"
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/lsp/util"
+	"github.com/charmbracelet/crush/internal/lspsymbols"
 	"github.com/charmbracelet/crush/internal/permission"
-	"github.com/charmbracelet/crush/internal/semantic"
 )
 
 const (
-	SemanticOverviewToolName           = "semantic_symbol_overview"
-	SemanticFindSymbolToolName         = "semantic_find_symbol"
-	SemanticFindRefsToolName           = "semantic_find_references"
-	SemanticReplaceSymbolBodyToolName  = "semantic_replace_symbol_body"
-	SemanticInsertBeforeSymbolToolName = "semantic_insert_before_symbol"
-	SemanticInsertAfterSymbolToolName  = "semantic_insert_after_symbol"
-	SemanticRenameSymbolToolName       = "semantic_rename_symbol"
+	LSPSymbolOverviewToolName           = "lsp_symbol_overview"
+	LSPSymbolFindSymbolToolName         = "lsp_symbol_find_symbol"
+	LSPSymbolFindRefsToolName           = "lsp_symbol_find_references"
+	LSPSymbolReplaceSymbolBodyToolName  = "lsp_symbol_replace_symbol_body"
+	LSPSymbolInsertBeforeSymbolToolName = "lsp_symbol_insert_before_symbol"
+	LSPSymbolInsertAfterSymbolToolName  = "lsp_symbol_insert_after_symbol"
+	LSPSymbolRenameSymbolToolName       = "lsp_symbol_rename_symbol"
 )
 
-type semanticToolDeps struct {
-	retriever   *semantic.Retriever
-	editor      *semantic.Editor
+type lspSymbolToolDeps struct {
+	retriever   *lspsymbols.Retriever
+	editor      *lspsymbols.Editor
 	permissions permission.Service
 	history     history.Service
 	lspClients  *csync.Map[string, *lsp.Client]
 	workingDir  string
 }
 
-func newSemanticDeps(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) semanticToolDeps {
-	r := semantic.NewRetriever(lspClients, workingDir)
-	return semanticToolDeps{
+func newLSPSymbolDeps(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) lspSymbolToolDeps {
+	r := lspsymbols.NewRetriever(lspClients, workingDir)
+	return lspSymbolToolDeps{
 		retriever:   r,
-		editor:      semantic.NewEditor(r),
+		editor:      lspsymbols.NewEditor(r),
 		permissions: permissions,
 		history:     history,
 		lspClients:  lspClients,
@@ -48,25 +48,25 @@ func newSemanticDeps(lspClients *csync.Map[string, *lsp.Client], permissions per
 	}
 }
 
-type SemanticOverviewParams struct {
+type LSPSymbolOverviewParams struct {
 	Path           string `json:"path" description:"Relative path to file for overview"`
 	MaxAnswerChars int    `json:"max_answer_chars,omitempty" description:"Maximum size of the response in characters (default 150000)"`
 }
 
-func NewSemanticOverviewTool(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) fantasy.AgentTool {
-	deps := newSemanticDeps(lspClients, permissions, history, workingDir)
+func NewLSPSymbolOverviewTool(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) fantasy.AgentTool {
+	deps := newLSPSymbolDeps(lspClients, permissions, history, workingDir)
 	description := "Retrieve top-level symbols for a file using LSP's document symbol. " +
 		"Use to quickly understand file structure; includes name_path, kind, and body_location."
 
 	return fantasy.NewAgentTool(
-		SemanticOverviewToolName,
+		LSPSymbolOverviewToolName,
 		description,
-		func(ctx context.Context, params SemanticOverviewParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+		func(ctx context.Context, params LSPSymbolOverviewParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			if params.Path == "" {
 				return fantasy.NewTextErrorResponse("path is required"), nil
 			}
 			if params.MaxAnswerChars <= 0 {
-				params.MaxAnswerChars = semantic.DefaultMaxAnswerChars
+				params.MaxAnswerChars = lspsymbols.DefaultMaxAnswerChars
 			}
 			res, err := deps.retriever.SymbolOverview(ctx, params.Path, params.MaxAnswerChars)
 			if err != nil {
@@ -84,23 +84,35 @@ type SemanticFindSymbolParams struct {
 	IncludeBody     bool   `json:"include_body,omitempty" description:"Attach symbol body to the response"`
 	IncludeKinds    []int  `json:"include_kinds,omitempty" description:"LSP symbol kinds to include (ints 1-26)"`
 	ExcludeKinds    []int  `json:"exclude_kinds,omitempty" description:"LSP symbol kinds to exclude (ints 1-26)"`
-	Substring       bool   `json:"substring,omitempty" description:"Allow substring match on the last path segment"`
+	Substring       bool   `json:"substring,omitempty" description:"Allow substring match on the last path segment (disables regex)"`
+	IsRegex         bool   `json:"is_regex,omitempty" description:"Treat name_path_pattern as regex (RE2 syntax). Default: true unless substring=true"`
 	MaxResults      int    `json:"max_results,omitempty" description:"Maximum number of symbols to return (0 means no limit)"`
 	MaxAnswerChars  int    `json:"max_answer_chars,omitempty" description:"Maximum size of the response in characters (default 150000)"`
 }
 
-func NewSemanticFindSymbolTool(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) fantasy.AgentTool {
-	deps := newSemanticDeps(lspClients, permissions, history, workingDir)
-	description := "Find symbols by name path using LSP document symbols. Supports include/exclude kinds, substring matching, depth for children, and optional bodies."
+func NewLSPSymbolFindSymbolTool(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) fantasy.AgentTool {
+	deps := newLSPSymbolDeps(lspClients, permissions, history, workingDir)
+	description := "Find symbols by name/path using LSP document symbols with REGEX support (enabled by default). " +
+		"Searches against symbol hierarchy (e.g. 'pkg/Class/method'). Supports include/exclude kinds, depth for children, and optional bodies. " +
+		"This is NOT vector/semantic search - it's structural code search via Language Server Protocol."
 
 	return fantasy.NewAgentTool(
-		SemanticFindSymbolToolName,
+		LSPSymbolFindSymbolToolName,
 		description,
 		func(ctx context.Context, params SemanticFindSymbolParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
-			if params.MaxAnswerChars <= 0 {
-				params.MaxAnswerChars = semantic.DefaultMaxAnswerChars
+			// Default is_regex to true if not explicitly set
+			isRegex := true
+			if params.Substring {
+				// substring mode explicitly disables regex
+				isRegex = false
+			} else if params.IsRegex {
+				isRegex = true
 			}
-			result, err := deps.retriever.FindSymbols(ctx, params.NamePathPattern, params.Path, params.Depth, params.IncludeBody, params.IncludeKinds, params.ExcludeKinds, params.Substring, params.MaxResults, params.MaxAnswerChars)
+
+			if params.MaxAnswerChars <= 0 {
+				params.MaxAnswerChars = lspsymbols.DefaultMaxAnswerChars
+			}
+			result, err := deps.retriever.FindSymbols(ctx, params.NamePathPattern, params.Path, params.Depth, params.IncludeBody, params.IncludeKinds, params.ExcludeKinds, params.Substring, isRegex, params.MaxResults, params.MaxAnswerChars)
 			if err != nil {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
@@ -120,19 +132,19 @@ type SemanticFindRefsParams struct {
 	MaxAnswerChars int    `json:"max_answer_chars,omitempty" description:"Maximum size of the response in characters (default 150000)"`
 }
 
-func NewSemanticFindReferencesTool(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) fantasy.AgentTool {
-	deps := newSemanticDeps(lspClients, permissions, history, workingDir)
+func NewLSPSymbolFindReferencesTool(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) fantasy.AgentTool {
+	deps := newLSPSymbolDeps(lspClients, permissions, history, workingDir)
 	description := "Find symbols referencing the target symbol (via LSP references) and return locations with context."
 
 	return fantasy.NewAgentTool(
-		SemanticFindRefsToolName,
+		LSPSymbolFindRefsToolName,
 		description,
 		func(ctx context.Context, params SemanticFindRefsParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			if params.NamePath == "" || params.Path == "" {
 				return fantasy.NewTextErrorResponse("name_path and path are required"), nil
 			}
 			if params.MaxAnswerChars <= 0 {
-				params.MaxAnswerChars = semantic.DefaultMaxAnswerChars
+				params.MaxAnswerChars = lspsymbols.DefaultMaxAnswerChars
 			}
 			result, err := deps.retriever.FindReferences(ctx, params.NamePath, params.Path, params.IncludeKinds, params.ExcludeKinds, params.IncludeImports, params.IncludeSelf, params.MaxResults, params.MaxAnswerChars)
 			if err != nil {
@@ -149,12 +161,12 @@ type SemanticReplaceBodyParams struct {
 	Body     string `json:"body" description:"Replacement body text"`
 }
 
-func NewSemanticReplaceBodyTool(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) fantasy.AgentTool {
-	deps := newSemanticDeps(lspClients, permissions, history, workingDir)
-	description := "Replace the body of a symbol using its LSP range. Use after locating the symbol via semantic_find_symbol."
+func NewLSPSymbolReplaceBodyTool(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) fantasy.AgentTool {
+	deps := newLSPSymbolDeps(lspClients, permissions, history, workingDir)
+	description := "Replace the body of a symbol using its LSP range. Use after locating the symbol via lsp_symbol_find_symbol."
 
 	return fantasy.NewAgentTool(
-		SemanticReplaceSymbolBodyToolName,
+		LSPSymbolReplaceSymbolBodyToolName,
 		description,
 		func(ctx context.Context, params SemanticReplaceBodyParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			if params.NamePath == "" || params.Path == "" {
@@ -174,7 +186,7 @@ func NewSemanticReplaceBodyTool(lspClients *csync.Map[string, *lsp.Client], perm
 				SessionID:   sessionID,
 				Path:        fsext.PathOrPrefix(filePath, deps.workingDir),
 				ToolCallID:  call.ID,
-				ToolName:    SemanticReplaceSymbolBodyToolName,
+				ToolName:    LSPSymbolReplaceSymbolBodyToolName,
 				Action:      "write",
 				Description: fmt.Sprintf("Replace symbol body in %s", filePath),
 				Params: map[string]any{
@@ -207,12 +219,12 @@ type SemanticInsertParams struct {
 	Body     string `json:"body" description:"Content to insert"`
 }
 
-func NewSemanticInsertBeforeTool(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) fantasy.AgentTool {
-	deps := newSemanticDeps(lspClients, permissions, history, workingDir)
+func NewLSPSymbolInsertBeforeTool(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) fantasy.AgentTool {
+	deps := newLSPSymbolDeps(lspClients, permissions, history, workingDir)
 	description := "Insert content before a symbol definition using LSP ranges."
 
 	return fantasy.NewAgentTool(
-		SemanticInsertBeforeSymbolToolName,
+		LSPSymbolInsertBeforeSymbolToolName,
 		description,
 		func(ctx context.Context, params SemanticInsertParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			if params.NamePath == "" || params.Path == "" {
@@ -232,7 +244,7 @@ func NewSemanticInsertBeforeTool(lspClients *csync.Map[string, *lsp.Client], per
 				SessionID:   sessionID,
 				Path:        fsext.PathOrPrefix(filePath, deps.workingDir),
 				ToolCallID:  call.ID,
-				ToolName:    SemanticInsertBeforeSymbolToolName,
+				ToolName:    LSPSymbolInsertBeforeSymbolToolName,
 				Action:      "write",
 				Description: fmt.Sprintf("Insert before symbol in %s", filePath),
 				Params:      map[string]any{"file_path": filePath},
@@ -257,12 +269,12 @@ func NewSemanticInsertBeforeTool(lspClients *csync.Map[string, *lsp.Client], per
 	)
 }
 
-func NewSemanticInsertAfterTool(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) fantasy.AgentTool {
-	deps := newSemanticDeps(lspClients, permissions, history, workingDir)
+func NewLSPSymbolInsertAfterTool(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) fantasy.AgentTool {
+	deps := newLSPSymbolDeps(lspClients, permissions, history, workingDir)
 	description := "Insert content after a symbol definition using LSP ranges."
 
 	return fantasy.NewAgentTool(
-		SemanticInsertAfterSymbolToolName,
+		LSPSymbolInsertAfterSymbolToolName,
 		description,
 		func(ctx context.Context, params SemanticInsertParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			if params.NamePath == "" || params.Path == "" {
@@ -282,7 +294,7 @@ func NewSemanticInsertAfterTool(lspClients *csync.Map[string, *lsp.Client], perm
 				SessionID:   sessionID,
 				Path:        fsext.PathOrPrefix(filePath, deps.workingDir),
 				ToolCallID:  call.ID,
-				ToolName:    SemanticInsertAfterSymbolToolName,
+				ToolName:    LSPSymbolInsertAfterSymbolToolName,
 				Action:      "write",
 				Description: fmt.Sprintf("Insert after symbol in %s", filePath),
 				Params:      map[string]any{"file_path": filePath},
@@ -313,12 +325,12 @@ type SemanticRenameParams struct {
 	NewName  string `json:"new_name" description:"New symbol name"`
 }
 
-func NewSemanticRenameTool(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) fantasy.AgentTool {
-	deps := newSemanticDeps(lspClients, permissions, history, workingDir)
+func NewLSPSymbolRenameTool(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) fantasy.AgentTool {
+	deps := newLSPSymbolDeps(lspClients, permissions, history, workingDir)
 	description := "Rename a symbol via LSP rename and apply workspace edits."
 
 	return fantasy.NewAgentTool(
-		SemanticRenameSymbolToolName,
+		LSPSymbolRenameSymbolToolName,
 		description,
 		func(ctx context.Context, params SemanticRenameParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			if params.NamePath == "" || params.Path == "" || params.NewName == "" {
@@ -351,7 +363,7 @@ func NewSemanticRenameTool(lspClients *csync.Map[string, *lsp.Client], permissio
 					SessionID:   sessionID,
 					Path:        fsext.PathOrPrefix(path, deps.workingDir),
 					ToolCallID:  call.ID,
-					ToolName:    SemanticRenameSymbolToolName,
+					ToolName:    LSPSymbolRenameSymbolToolName,
 					Action:      "write",
 					Description: fmt.Sprintf("Rename symbol in %s (edit %s)", filePath, path),
 					Params: map[string]any{

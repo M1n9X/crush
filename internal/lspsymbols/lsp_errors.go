@@ -1,4 +1,4 @@
-package semantic
+package lspsymbols
 
 import "strings"
 

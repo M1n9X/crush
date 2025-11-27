@@ -16,7 +16,7 @@ import (
 	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/env"
 	"github.com/charmbracelet/crush/internal/lsp"
-	"github.com/charmbracelet/crush/internal/semantic"
+	"github.com/charmbracelet/crush/internal/lspsymbols"
 )
 
 func main() {
@@ -46,20 +46,20 @@ func main() {
 	lspMap := csync.NewMap[string, *lsp.Client]()
 	lspMap.Set("go", client)
 
-	retriever := semantic.NewRetriever(lspMap, repoRoot)
-	editor := semantic.NewEditor(retriever)
+	retriever := lspsymbols.NewRetriever(lspMap, repoRoot)
+	editor := lspsymbols.NewEditor(retriever)
 
 	fixturePath := filepath.Join(repoRoot, "semantic_demo_fixture.go")
 	defer os.Remove(fixturePath)
 	writeFixture(fixturePath)
 
 	fmt.Println("=== symbol_overview ===")
-	overview, err := retriever.SymbolOverview(ctx, filepath.Base(fixturePath), semantic.DefaultMaxAnswerChars)
+	overview, err := retriever.SymbolOverview(ctx, filepath.Base(fixturePath), lspsymbols.DefaultMaxAnswerChars)
 	must(err)
 	fmt.Println(overview)
 
 	fmt.Println("\n=== find_symbol greet ===")
-	find, err := retriever.FindSymbols(ctx, "greet", filepath.Base(fixturePath), 1, true, nil, nil, false, 0, semantic.DefaultMaxAnswerChars)
+	find, err := retriever.FindSymbols(ctx, "greet", filepath.Base(fixturePath), 1, true, nil, nil, false, false, 0, lspsymbols.DefaultMaxAnswerChars)
 	must(err)
 	fmt.Println(find)
 
@@ -67,12 +67,12 @@ func main() {
 	newBody := "func greet(name string) string {\n\treturn format(\"patched \" + name)\n}\n"
 	err = editor.ReplaceSymbolBody(ctx, "greet", filepath.Base(fixturePath), newBody)
 	must(err)
-	updated, err := retriever.FindSymbols(ctx, "greet", filepath.Base(fixturePath), 1, true, nil, nil, false, 0, semantic.DefaultMaxAnswerChars)
+	updated, err := retriever.FindSymbols(ctx, "greet", filepath.Base(fixturePath), 1, true, nil, nil, false, false, 0, lspsymbols.DefaultMaxAnswerChars)
 	must(err)
 	fmt.Println(updated)
 
 	fmt.Println("\n=== find_references format ===")
-	refs, err := retriever.FindReferences(ctx, "format", filepath.Base(fixturePath), nil, nil, false, false, 0, semantic.DefaultMaxAnswerChars)
+	refs, err := retriever.FindReferences(ctx, "format", filepath.Base(fixturePath), nil, nil, false, false, 0, lspsymbols.DefaultMaxAnswerChars)
 	must(err)
 	fmt.Println(refs)
 }
