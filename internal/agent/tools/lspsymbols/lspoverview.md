@@ -2,6 +2,12 @@ Get a high-level structural overview of a file's symbols without reading the ent
 
 **Use this to understand file structure before diving into details.**
 
+<token_guidance>
+- Low token cost: returns only top-level symbols and line ranges (no bodies)
+- Use before lspfind/view to avoid reading whole files
+- Default max_answer_chars=150000; typical responses are much smaller
+</token_guidance>
+
 <usage>
 - Provide file path (required)
 - Returns hierarchical list of top-level symbols (classes, functions, exports)

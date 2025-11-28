@@ -1,5 +1,12 @@
 Fast content search tool that finds files containing specific text/patterns, returning matching paths sorted by modification time (newest first).
 
+<when_to_use>
+- Use for free-form text (comments/strings/docs) or when LSP is unavailable
+- Prefer lspfind for symbol/definition lookup to reduce tokens and false positives
+- Combine with glob/path/include filters to keep output small
+- Returns up to 100 matches; each line is capped at 500 characters (token-heavy vs glob/lspfind)
+</when_to_use>
+
 <usage>
 - Provide regex pattern to search within file contents
 - Set literal_text=true for exact text with special characters (recommended for non-regex users)

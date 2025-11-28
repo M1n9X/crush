@@ -1,5 +1,12 @@
 **PRIMARY TOOL for finding code definitions** (functions, classes, methods, types, interfaces). Use this INSTEAD of grep when searching for symbols or definitions.
 
+<token_guidance>
+- Cheapest definition lookup: omit bodies by default; set max_results small (e.g., 20)
+- Use substring=true for lightweight fuzzy name matching without bodies
+- Raise include_body or depth only when you must read implementations
+- Default max_answer_chars=150000 (~37k tokens); typical responses are far smaller
+</token_guidance>
+
 <usage>
 - Provide symbol name or pattern to search for (regex enabled by default)
 - Optional path to scope search to specific file or directory

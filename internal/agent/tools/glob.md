@@ -1,5 +1,11 @@
 Fast file pattern matching tool that finds files by name/pattern, returning paths sorted by modification time (newest first).
 
+<when_to_use>
+- Cheapest token option: returns paths only, no file content
+- First step to constrain later grep/LSP searches to a smaller set
+- Ideal for listing candidate files before content searches
+</when_to_use>
+
 <usage>
 - Provide glob pattern to match against file paths
 - Optional starting directory (defaults to current working directory)

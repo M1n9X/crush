@@ -2,6 +2,13 @@ Find all references/usages of a specific symbol using LSP's precise reference tr
 
 **Use this when you need to see WHERE and HOW a symbol is used** across your codebase.
 
+<token_guidance>
+- Set max_results to keep output small; start with 20–50
+- Leave include_imports=false (default) to avoid noisy reference snippets
+- Responses include snippets; cheaper than grep when you already know the symbol
+- Default max_answer_chars=150000 (~37k tokens)
+</token_guidance>
+
 <usage>
 - Provide exact symbol name path (e.g., 'MyClass/myMethod')
 - Specify file containing the symbol definition

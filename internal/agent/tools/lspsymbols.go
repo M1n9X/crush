@@ -27,6 +27,24 @@ const (
 	LSPSymbolRenameSymbolToolName       = "lsprename"
 )
 
+//go:embed lspsymbols/lspoverview.md
+var lspOverviewDescription []byte
+
+//go:embed lspsymbols/lspfind.md
+var lspFindDescription []byte
+
+//go:embed lspsymbols/lsprefs.md
+var lspRefsDescription []byte
+
+//go:embed lspsymbols/lspreplace.md
+var lspReplaceDescription []byte
+
+//go:embed lspsymbols/lspinsert.md
+var lspInsertDescription []byte
+
+//go:embed lspsymbols/lsprename.md
+var lspRenameDescription []byte
+
 type lspSymbolToolDeps struct {
 	retriever   *lspsymbols.Retriever
 	editor      *lspsymbols.Editor
@@ -55,12 +73,9 @@ type LSPSymbolOverviewParams struct {
 
 func NewLSPSymbolOverviewTool(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) fantasy.AgentTool {
 	deps := newLSPSymbolDeps(lspClients, permissions, history, workingDir)
-	description := "Get high-level structure of a file (top-level symbols: classes, functions, exports). " +
-		"Use BEFORE detailed exploration to understand file organization. Returns symbol names, kinds, and locations WITHOUT bodies."
-
 	return fantasy.NewAgentTool(
 		LSPSymbolOverviewToolName,
-		description,
+		string(lspOverviewDescription),
 		func(ctx context.Context, params LSPSymbolOverviewParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			if params.Path == "" {
 				return fantasy.NewTextErrorResponse("path is required"), nil
@@ -92,15 +107,9 @@ type LSPSymbolFindSymbolParams struct {
 
 func NewLSPSymbolFindSymbolTool(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) fantasy.AgentTool {
 	deps := newLSPSymbolDeps(lspClients, permissions, history, workingDir)
-	description := "**PRIMARY TOOL for finding code definitions** (functions, classes, methods, types). " +
-		"USE THIS INSTEAD OF grep when searching for symbols/definitions. " +
-		"Understands code structure, ignores comments/strings. " +
-		"Supports: regex patterns (default), hierarchical paths (pkg/Class/method), symbol kind filtering (include_kinds=[12] for functions). " +
-		"Use grep ONLY for: text in comments, string literals, non-code files."
-
 	return fantasy.NewAgentTool(
 		LSPSymbolFindSymbolToolName,
-		description,
+		string(lspFindDescription),
 		func(ctx context.Context, params LSPSymbolFindSymbolParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			// Default is_regex to true if not explicitly set
 			isRegex := true
@@ -136,15 +145,9 @@ type LSPSymbolFindRefsParams struct {
 
 func NewLSPSymbolFindReferencesTool(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) fantasy.AgentTool {
 	deps := newLSPSymbolDeps(lspClients, permissions, history, workingDir)
-	description := "Find WHERE a symbol is used/referenced across the codebase. " +
-		"More precise than grep: resolves qualified names (User.Save vs File.Save). " +
-		"Returns references with context (containing symbol, file, line range, code snippet). " +
-		"Workflow: Use lspfind to locate symbol → lsprefs to see all usages. " +
-		"Filters: include_imports (default: false), include_kinds, exclude_kinds."
-
 	return fantasy.NewAgentTool(
 		LSPSymbolFindRefsToolName,
-		description,
+		string(lspRefsDescription),
 		func(ctx context.Context, params LSPSymbolFindRefsParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			if params.NamePath == "" || params.Path == "" {
 				return fantasy.NewTextErrorResponse("name_path and path are required"), nil
@@ -169,12 +172,9 @@ type LSPSymbolReplaceBodyParams struct {
 
 func NewLSPSymbolReplaceBodyTool(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) fantasy.AgentTool {
 	deps := newLSPSymbolDeps(lspClients, permissions, history, workingDir)
-	description := "Replace symbol body (function/method implementation) preserving signature. " +
-		"Use after locating symbol with lspfind. Requires: name_path (e.g., 'Class/method'), path (file), body (new implementation)."
-
 	return fantasy.NewAgentTool(
 		LSPSymbolReplaceSymbolBodyToolName,
-		description,
+		string(lspReplaceDescription),
 		func(ctx context.Context, params LSPSymbolReplaceBodyParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			if params.NamePath == "" || params.Path == "" {
 				return fantasy.NewTextErrorResponse("name_path and path are required"), nil
@@ -228,12 +228,9 @@ type LSPSymbolInsertParams struct {
 
 func NewLSPSymbolInsertBeforeTool(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) fantasy.AgentTool {
 	deps := newLSPSymbolDeps(lspClients, permissions, history, workingDir)
-	description := "Insert code before a symbol definition. " +
-		"Uses LSP to find precise insertion point. Requires: name_path (anchor symbol), path (file), body (content to insert)."
-
 	return fantasy.NewAgentTool(
 		LSPSymbolInsertBeforeSymbolToolName,
-		description,
+		string(lspInsertDescription),
 		func(ctx context.Context, params LSPSymbolInsertParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			if params.NamePath == "" || params.Path == "" {
 				return fantasy.NewTextErrorResponse("name_path and path are required"), nil
@@ -279,12 +276,9 @@ func NewLSPSymbolInsertBeforeTool(lspClients *csync.Map[string, *lsp.Client], pe
 
 func NewLSPSymbolInsertAfterTool(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) fantasy.AgentTool {
 	deps := newLSPSymbolDeps(lspClients, permissions, history, workingDir)
-	description := "Insert code after a symbol definition. " +
-		"Uses LSP to find precise insertion point. Requires: name_path (anchor symbol), path (file), body (content to insert)."
-
 	return fantasy.NewAgentTool(
 		LSPSymbolInsertAfterSymbolToolName,
-		description,
+		string(lspInsertDescription),
 		func(ctx context.Context, params LSPSymbolInsertParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			if params.NamePath == "" || params.Path == "" {
 				return fantasy.NewTextErrorResponse("name_path and path are required"), nil
@@ -336,13 +330,9 @@ type LSPSymbolRenameParams struct {
 
 func NewLSPSymbolRenameTool(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) fantasy.AgentTool {
 	deps := newLSPSymbolDeps(lspClients, permissions, history, workingDir)
-	description := "Rename a symbol across entire workspace (all references updated automatically). " +
-		"Language-aware: handles imports, qualified names. Returns list of affected files. " +
-		"Workflow: lspfind to locate → lsprefs to verify impact → lsprename to execute."
-
 	return fantasy.NewAgentTool(
 		LSPSymbolRenameSymbolToolName,
-		description,
+		string(lspRenameDescription),
 		func(ctx context.Context, params LSPSymbolRenameParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			if params.NamePath == "" || params.Path == "" || params.NewName == "" {
 				return fantasy.NewTextErrorResponse("name_path, path, and new_name are required"), nil
