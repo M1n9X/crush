@@ -69,10 +69,13 @@ func (h *promptHistory) shouldHandleNavigation(text string, cursor *tea.Cursor) 
 	if strings.TrimSpace(text) == "" {
 		return true
 	}
-	if cursor.X != 0 || cursor.Y != 0 {
-		return false
+	// Allow navigation when cursor is on the first line (Y==0)
+	// This matches standard shell behavior: Up/Down navigate history on first line,
+	// but move cursor on other lines in multi-line input
+	if cursor.Y == 0 {
+		return true
 	}
-	return h.lastValue != "" && text == h.lastValue
+	return false
 }
 
 func (h *promptHistory) previous() (string, bool) {
