@@ -469,7 +469,7 @@ func TestConfig_setupAgentsWithNoDisabledTools(t *testing.T) {
 
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)
-	assert.Equal(t, []string{"lsp_symbol_overview", "lsp_symbol_find_symbol", "lsp_symbol_find_references", "glob", "grep", "ls", "sourcegraph", "view", "memory_read"}, taskAgent.AllowedTools)
+	assert.Equal(t, []string{"lspoverview", "lspfind", "lsprefs", "glob", "grep", "ls", "sourcegraph", "view", "memory_read"}, taskAgent.AllowedTools)
 }
 
 func TestConfig_setupAgentsWithDisabledTools(t *testing.T) {
@@ -495,14 +495,13 @@ func TestConfig_setupAgentsWithDisabledTools(t *testing.T) {
 		"job_kill",
 		"multiedit",
 		"lsp_diagnostics",
-		"lsp_references",
-		"lsp_symbol_overview",
-		"lsp_symbol_find_symbol",
-		"lsp_symbol_find_references",
-		"lsp_symbol_replace_symbol_body",
-		"lsp_symbol_insert_before_symbol",
-		"lsp_symbol_insert_after_symbol",
-		"lsp_symbol_rename_symbol",
+		"lspoverview",
+		"lspfind",
+		"lsprefs",
+		"lspreplace",
+		"lspinsertbefore",
+		"lspinsertafter",
+		"lsprename",
 		"fetch",
 		"agentic_fetch",
 		"glob",
@@ -516,7 +515,7 @@ func TestConfig_setupAgentsWithDisabledTools(t *testing.T) {
 
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)
-	assert.Equal(t, []string{"lsp_symbol_overview", "lsp_symbol_find_symbol", "lsp_symbol_find_references", "glob", "ls", "sourcegraph", "view", "memory_read"}, taskAgent.AllowedTools)
+	assert.Equal(t, []string{"lspoverview", "lspfind", "lsprefs", "glob", "ls", "sourcegraph", "view", "memory_read"}, taskAgent.AllowedTools)
 }
 
 func TestConfig_setupAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
@@ -528,9 +527,9 @@ func TestConfig_setupAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
 				"ls",
 				"sourcegraph",
 				"view",
-				"lsp_symbol_overview",
-				"lsp_symbol_find_symbol",
-				"lsp_symbol_find_references",
+				"lspoverview",
+				"lspfind",
+				"lsprefs",
 			},
 		},
 	}
@@ -548,11 +547,10 @@ func TestConfig_setupAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
 		"edit",
 		"multiedit",
 		"lsp_diagnostics",
-		"lsp_references",
-		"lsp_symbol_replace_symbol_body",
-		"lsp_symbol_insert_before_symbol",
-		"lsp_symbol_insert_after_symbol",
-		"lsp_symbol_rename_symbol",
+		"lspreplace",
+		"lspinsertbefore",
+		"lspinsertafter",
+		"lsprename",
 		"fetch",
 		"agentic_fetch",
 		"write",

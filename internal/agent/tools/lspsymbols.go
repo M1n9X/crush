@@ -18,13 +18,13 @@ import (
 )
 
 const (
-	LSPSymbolOverviewToolName           = "lsp_symbol_overview"
-	LSPSymbolFindSymbolToolName         = "lsp_symbol_find_symbol"
-	LSPSymbolFindRefsToolName           = "lsp_symbol_find_references"
-	LSPSymbolReplaceSymbolBodyToolName  = "lsp_symbol_replace_symbol_body"
-	LSPSymbolInsertBeforeSymbolToolName = "lsp_symbol_insert_before_symbol"
-	LSPSymbolInsertAfterSymbolToolName  = "lsp_symbol_insert_after_symbol"
-	LSPSymbolRenameSymbolToolName       = "lsp_symbol_rename_symbol"
+	LSPSymbolOverviewToolName           = "lspoverview"
+	LSPSymbolFindSymbolToolName         = "lspfind"
+	LSPSymbolFindRefsToolName           = "lsprefs"
+	LSPSymbolReplaceSymbolBodyToolName  = "lspreplace"
+	LSPSymbolInsertBeforeSymbolToolName = "lspinsertbefore"
+	LSPSymbolInsertAfterSymbolToolName  = "lspinsertafter"
+	LSPSymbolRenameSymbolToolName       = "lsprename"
 )
 
 type lspSymbolToolDeps struct {
@@ -55,9 +55,8 @@ type LSPSymbolOverviewParams struct {
 
 func NewLSPSymbolOverviewTool(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) fantasy.AgentTool {
 	deps := newLSPSymbolDeps(lspClients, permissions, history, workingDir)
-	description := "Retrieve top-level symbols for a file using LSP's document symbol. " +
-		"Best for: Getting a high-level map of a file's structure (classes, methods, exports) without reading the entire content. " +
-		"Capabilities: Returns a hierarchical list of symbols with their kinds and locations."
+	description := "Get high-level structure of a file (top-level symbols: classes, functions, exports). " +
+		"Use BEFORE detailed exploration to understand file organization. Returns symbol names, kinds, and locations WITHOUT bodies."
 
 	return fantasy.NewAgentTool(
 		LSPSymbolOverviewToolName,
@@ -93,10 +92,11 @@ type LSPSymbolFindSymbolParams struct {
 
 func NewLSPSymbolFindSymbolTool(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) fantasy.AgentTool {
 	deps := newLSPSymbolDeps(lspClients, permissions, history, workingDir)
-	description := "Find symbols by name/path using LSP document symbols with REGEX support (enabled by default). " +
-		"Best for: Finding specific code definitions (functions, classes, structs, interfaces) when you know the name or pattern. " +
-		"Capabilities: Search by hierarchy (e.g. 'pkg/Class/method'), filter by symbol kind (e.g. only functions), and optional body retrieval. " +
-		"Differentiation: Unlike grep, this understands code structure and ignores text matches in comments or strings."
+	description := "**PRIMARY TOOL for finding code definitions** (functions, classes, methods, types). " +
+		"USE THIS INSTEAD OF grep when searching for symbols/definitions. " +
+		"Understands code structure, ignores comments/strings. " +
+		"Supports: regex patterns (default), hierarchical paths (pkg/Class/method), symbol kind filtering (include_kinds=[12] for functions). " +
+		"Use grep ONLY for: text in comments, string literals, non-code files."
 
 	return fantasy.NewAgentTool(
 		LSPSymbolFindSymbolToolName,
@@ -136,9 +136,11 @@ type LSPSymbolFindRefsParams struct {
 
 func NewLSPSymbolFindReferencesTool(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) fantasy.AgentTool {
 	deps := newLSPSymbolDeps(lspClients, permissions, history, workingDir)
-	description := "Find symbols referencing the target symbol (via LSP references) and return locations with context. " +
-		"Best for: Finding actual code usage of a specific symbol (function calls, class instantiations). " +
-		"Differentiation: More precise than grep because it resolves symbol references (e.g. distinguishing between 'User.Save' and 'File.Save')."
+	description := "Find WHERE a symbol is used/referenced across the codebase. " +
+		"More precise than grep: resolves qualified names (User.Save vs File.Save). " +
+		"Returns references with context (containing symbol, file, line range, code snippet). " +
+		"Workflow: Use lspfind to locate symbol → lsprefs to see all usages. " +
+		"Filters: include_imports (default: false), include_kinds, exclude_kinds."
 
 	return fantasy.NewAgentTool(
 		LSPSymbolFindRefsToolName,
@@ -167,7 +169,8 @@ type LSPSymbolReplaceBodyParams struct {
 
 func NewLSPSymbolReplaceBodyTool(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) fantasy.AgentTool {
 	deps := newLSPSymbolDeps(lspClients, permissions, history, workingDir)
-	description := "Replace the body of a symbol using its LSP range. Use after locating the symbol via lsp_symbol_find_symbol."
+	description := "Replace symbol body (function/method implementation) preserving signature. " +
+		"Use after locating symbol with lspfind. Requires: name_path (e.g., 'Class/method'), path (file), body (new implementation)."
 
 	return fantasy.NewAgentTool(
 		LSPSymbolReplaceSymbolBodyToolName,
@@ -225,7 +228,8 @@ type LSPSymbolInsertParams struct {
 
 func NewLSPSymbolInsertBeforeTool(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) fantasy.AgentTool {
 	deps := newLSPSymbolDeps(lspClients, permissions, history, workingDir)
-	description := "Insert content before a symbol definition using LSP ranges."
+	description := "Insert code before a symbol definition. " +
+		"Uses LSP to find precise insertion point. Requires: name_path (anchor symbol), path (file), body (content to insert)."
 
 	return fantasy.NewAgentTool(
 		LSPSymbolInsertBeforeSymbolToolName,
@@ -275,7 +279,8 @@ func NewLSPSymbolInsertBeforeTool(lspClients *csync.Map[string, *lsp.Client], pe
 
 func NewLSPSymbolInsertAfterTool(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) fantasy.AgentTool {
 	deps := newLSPSymbolDeps(lspClients, permissions, history, workingDir)
-	description := "Insert content after a symbol definition using LSP ranges."
+	description := "Insert code after a symbol definition. " +
+		"Uses LSP to find precise insertion point. Requires: name_path (anchor symbol), path (file), body (content to insert)."
 
 	return fantasy.NewAgentTool(
 		LSPSymbolInsertAfterSymbolToolName,
@@ -331,7 +336,9 @@ type LSPSymbolRenameParams struct {
 
 func NewLSPSymbolRenameTool(lspClients *csync.Map[string, *lsp.Client], permissions permission.Service, history history.Service, workingDir string) fantasy.AgentTool {
 	deps := newLSPSymbolDeps(lspClients, permissions, history, workingDir)
-	description := "Rename a symbol via LSP rename and apply workspace edits."
+	description := "Rename a symbol across entire workspace (all references updated automatically). " +
+		"Language-aware: handles imports, qualified names. Returns list of affected files. " +
+		"Workflow: lspfind to locate → lsprefs to verify impact → lsprename to execute."
 
 	return fantasy.NewAgentTool(
 		LSPSymbolRenameSymbolToolName,

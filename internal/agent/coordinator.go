@@ -520,9 +520,8 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 		allTools = append(
 			allTools,
 			tools.NewDiagnosticsTool(c.lspClients),
-			tools.NewReferencesTool(c.lspClients),
-			tools.NewLSPSymbolOverviewTool(c.lspClients, c.permissions, c.history, c.cfg.WorkingDir()),
 			// LSP Symbol tools (structure-aware code search & edit)
+			tools.NewLSPSymbolOverviewTool(c.lspClients, c.permissions, c.history, c.cfg.WorkingDir()),
 			tools.NewLSPSymbolFindSymbolTool(c.lspClients, c.permissions, c.history, c.cfg.WorkingDir()),
 			tools.NewLSPSymbolFindReferencesTool(c.lspClients, c.permissions, c.history, c.cfg.WorkingDir()),
 			tools.NewLSPSymbolReplaceBodyTool(c.lspClients, c.permissions, c.history, c.cfg.WorkingDir()),

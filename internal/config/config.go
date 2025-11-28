@@ -604,14 +604,13 @@ func allToolNames() []string {
 		"edit",
 		"multiedit",
 		"lsp_diagnostics",
-		"lsp_references",
-		"lsp_symbol_overview",
-		"lsp_symbol_find_symbol",
-		"lsp_symbol_find_references",
-		"lsp_symbol_replace_symbol_body",
-		"lsp_symbol_insert_before_symbol",
-		"lsp_symbol_insert_after_symbol",
-		"lsp_symbol_rename_symbol",
+		"lspoverview",
+		"lspfind",
+		"lsprefs",
+		"lspreplace",
+		"lspinsertbefore",
+		"lspinsertafter",
+		"lsprename",
 		"fetch",
 		"agentic_fetch",
 		"glob",
@@ -634,7 +633,7 @@ func resolveAllowedTools(allTools []string, disabledTools []string) []string {
 }
 
 func resolveReadOnlyTools(tools []string) []string {
-	readOnlyTools := []string{"glob", "grep", "ls", "sourcegraph", "view", "lsp_symbol_overview", "lsp_symbol_find_symbol", "lsp_symbol_find_references", "memory_read"}
+	readOnlyTools := []string{"glob", "grep", "ls", "sourcegraph", "view", "lspoverview", "lspfind", "lsprefs", "memory_read"}
 	// filter to only include tools that are in allowedtools (include mode)
 	return filterSlice(tools, readOnlyTools, true)
 }

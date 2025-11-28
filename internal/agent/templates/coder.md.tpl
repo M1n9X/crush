@@ -282,10 +282,10 @@ When running non-trivial bash commands (especially those that modify the system)
 
 <tool_optimization>
 **Tool Selection Guide**:
-- **Code Structure & Definitions**: Use `lsp_symbol_overview` to map file structure and `lsp_symbol_find_symbol` to locate specific definitions (classes, functions). These tools understand code hierarchy and ignore noise.
+- **Code Structure & Definitions**: Use `lspoverview` to map file structure and `lspfind` to locate specific definitions (classes, functions). These tools understand code hierarchy and ignore noise.
 - **Text & Comments**: Use `grep` or `glob` when searching for string literals, TODOs, comments, or when the symbol name is unknown/partial.
-- **Usage & References**: Use `lsp_symbol_find_references` for precise usage finding (e.g. "Who calls this function?").
-- **Reading Files**: Always start with `lsp_symbol_overview` for large files to get a roadmap before reading specific sections with `view_file`.
+- **Usage & References**: Use `lsprefs` for precise usage finding (e.g. "Who calls this function?").
+- **Reading Files**: Always start with `lspoverview` for large files to get a roadmap before reading specific sections with `view_file`.
 </tool_optimization>
 
 <proactiveness>

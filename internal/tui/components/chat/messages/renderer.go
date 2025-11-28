@@ -1274,6 +1274,22 @@ func prettifyToolName(name string) string {
 		return "View"
 	case tools.WriteToolName:
 		return "Write"
+	case tools.DiagnosticsToolName:
+		return "Diagnostics"
+	case tools.LSPSymbolOverviewToolName:
+		return "LSP: Overview"
+	case tools.LSPSymbolFindSymbolToolName:
+		return "LSP: Find"
+	case tools.LSPSymbolFindRefsToolName:
+		return "LSP: Find Refs"
+	case tools.LSPSymbolReplaceSymbolBodyToolName:
+		return "LSP: Replace"
+	case tools.LSPSymbolInsertBeforeSymbolToolName:
+		return "LSP: Insert Before"
+	case tools.LSPSymbolInsertAfterSymbolToolName:
+		return "LSP: Insert After"
+	case tools.LSPSymbolRenameSymbolToolName:
+		return "LSP: Rename"
 	default:
 		return name
 	}
