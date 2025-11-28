@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/crush/internal/agent/tools/lspsymbols"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/env"
 	"github.com/charmbracelet/crush/internal/lsp"
-	"github.com/charmbracelet/crush/internal/lspsymbols"
 )
 
 func main() {
