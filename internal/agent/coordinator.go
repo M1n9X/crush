@@ -190,6 +190,20 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, 
 
 	mergedOptions, temp, topP, topK, freqPenalty, presPenalty := mergeCallOptions(model, providerCfg)
 
+	if providerCfg.OAuthToken != nil && providerCfg.OAuthToken.IsExpired() {
+		slog.Info("Detected expired OAuth token, attempting refresh", "provider", providerCfg.ID)
+		if refreshErr := c.cfg.RefreshOAuthToken(ctx, providerCfg.ID); refreshErr != nil {
+			slog.Error("Failed to refresh OAuth token", "provider", providerCfg.ID, "error", refreshErr)
+			return nil, refreshErr
+		}
+
+		// Rebuild models with refreshed token
+		if updateErr := c.UpdateModels(ctx); updateErr != nil {
+			slog.Error("Failed to update models after token refresh", "error", updateErr)
+			return nil, updateErr
+		}
+	}
+
 	call := SessionAgentCall{
 		SessionID:        sessionID,
 		Prompt:           prompt,
