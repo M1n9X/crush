@@ -46,6 +46,7 @@ func init() {
 		permissionsCmd,
 		toolsCmd,
 		pluginsCmd,
+		loginCmd,
 	)
 }
 
