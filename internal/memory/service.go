@@ -68,6 +68,8 @@ func (s *Service) List(agent string) ([]Entry, error) {
 			return nil
 		}
 
+		allowed := maxTotalMemoryBytes - totalBytes
+
 		info, statErr := d.Info()
 		if statErr != nil {
 			return statErr
@@ -85,6 +87,9 @@ func (s *Service) List(agent string) ([]Entry, error) {
 				return readErr
 			}
 			content := string(data[:maxSingleMemoryFileSize])
+			if allowed < len(content) {
+				content = content[:allowed]
+			}
 			entries = append(entries, Entry{
 				Path:      s.displayPath(agent, path),
 				FullPath:  path,
@@ -100,10 +105,15 @@ func (s *Service) List(agent string) ([]Entry, error) {
 			return readErr
 		}
 		content := string(data)
+		if allowed < len(content) {
+			content = content[:allowed]
+		}
+		truncated := len(content) < len(data)
 		entries = append(entries, Entry{
 			Path:     s.displayPath(agent, path),
 			FullPath: path,
 			Content:  content,
+			Truncated: truncated,
 		})
 		totalBytes += len(content)
 		return nil

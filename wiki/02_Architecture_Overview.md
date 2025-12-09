@@ -150,6 +150,7 @@ Each layer has a focused document:
 - [AI Agent System](architecture/01_Core_Modules/AI_Agent_System.md)
 - [Tool System](architecture/01_Core_Modules/Tool_System.md)
 - [Permission System](architecture/01_Core_Modules/Permission_System.md)
+- [Memory System](architecture/01_Core_Modules/Memory_System.md)
 - [LSP Integration](architecture/01_Core_Modules/LSP_Integration.md)
 - [MCP Integration](architecture/01_Core_Modules/MCP_Integration.md)
 - [Database Layer](architecture/01_Core_Modules/Database_Layer.md)

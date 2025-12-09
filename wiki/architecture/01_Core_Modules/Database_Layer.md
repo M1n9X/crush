@@ -108,7 +108,7 @@ Because SQLite doesn’t benefit from multiple concurrent writers, `sql.DB` is l
 
 ## Future Work
 
-- Remove unused queries (e.g., `ListNewFiles` currently references an `is_new` column that hasn’t been migrated yet).
+- ~~Remove unused queries (e.g., `ListNewFiles` currently references an `is_new` column that hasn't been migrated yet).~~ ✅ Fixed: ListNewFiles removed (2025-12-09).
 - Consider migrating token usage totals to dedicated tables if per-provider analytics become necessary.
 
 For a higher-level walkthrough of entities and relationships, see [Data Model & Persistence Layer](../architecture/03_Data_Model.md).

@@ -22,14 +22,10 @@ The items below are based on the current Go implementation (June 2025). Each ent
   - Provide shared dependencies (`WorkingDir`, `history.Service`, `permission.Service`, etc.) through a structured `Dependencies` object to avoid long parameter lists.
 - **Benefits**: easier to add/remove tools, pave the way for optional community tool packs, enable per-agent customization.
 
-## 3. Implement Provider Retry/Backoff (🟡 Medium)
+## 3. ~~Implement Provider Retry/Backoff~~ ✅ IMPLEMENTED
 
-- **Location**: `internal/agent/agent.go` (`OnRetry` callback currently contains `// TODO: implement`).
-- **Issue**: Temporary provider errors (429s, network blips) are surfaced immediately. The UI shows an error even though the provider requested a retry.
-- **Suggested approach**:
-  - Maintain a retry counter per session request and use `time.After(delay)` to block the streaming goroutine before re-entering `fantasy.Agent.Stream`.
-  - Surface the retry status to the TUI via a new pubsub event so users know the agent is waiting.
-- **Benefits**: smoother experience on flaky networks, less manual re-sending of prompts.
+- **Location**: `internal/agent/agent.go` (`OnRetry` callback).
+- **Status**: The `OnRetry` callback is now fully implemented with error classification (`ClassifyError`), user-friendly messages (`GetErrorMessage`), statistics tracking (`UpdateErrorStats`), and structured logging.
 
 ## 4. Normalize Permission Cache (🟢 Low)
 
@@ -40,8 +36,7 @@ The items below are based on the current Go implementation (June 2025). Each ent
   - Remove duplicate loops and guard modifications with the existing RWMutex.
 - **Benefits**: faster permission checks, less memory churn, simpler code.
 
-## 5. Guard Optional SQL Paths (🟢 Low)
+## 5. ~~Guard Optional SQL Paths~~ ✅ FIXED
 
-- **Location**: `internal/db/sql/files.sql` (`ListNewFiles`).
-- **Issue**: The query references `is_new`, which does not exist in the schema. Either delete the query or add the missing column/migration before wiring the feature.
-- **Benefits**: prevents latent runtime panics and clarifies the intended data model.
+- **Location**: `internal/db/sql/files.sql`.
+- **Status**: The `ListNewFiles` query has been removed from the SQL file and sqlc regenerated (2025-12-09).
