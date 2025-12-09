@@ -511,7 +511,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 		tools.NewSourcegraphTool(nil),
 		tools.NewViewTool(c.lspClients, c.permissions, c.cfg.WorkingDir()),
 		tools.NewWriteTool(c.lspClients, c.permissions, c.history, c.cfg.WorkingDir()),
-		tools.NewClaudeCodeTool(c.permissions, c.cfg.WorkingDir()),
+		tools.NewClaudeCodeTool(c.permissions, c.messages, c.cfg.WorkingDir()),
 		tools.NewMemoryReadTool(agent.ID, c.memory, c.freshness),
 		tools.NewMemoryWriteTool(agent.ID, c.memory, c.freshness, c.history),
 	)

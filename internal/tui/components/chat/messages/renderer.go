@@ -127,6 +127,9 @@ func (br baseRenderer) makeNestedHeader(v *toolCallCmp, tool string, width int, 
 	} else if v.cancelled {
 		icon = t.S().Muted.Render(styles.ToolPending)
 	}
+	if v.prefix != "" {
+		tool = fmt.Sprintf("[%s] %s", v.prefix, tool)
+	}
 	tool = t.S().Base.Foreground(t.FgHalfMuted).Render(tool)
 	prefix := fmt.Sprintf("%s %s ", icon, tool)
 	return prefix + renderParamList(true, width-lipgloss.Width(prefix), params...)
@@ -147,6 +150,9 @@ func (br baseRenderer) makeHeader(v *toolCallCmp, tool string, width int, params
 		}
 	} else if v.cancelled {
 		icon = t.S().Muted.Render(styles.ToolPending)
+	}
+	if v.prefix != "" {
+		tool = fmt.Sprintf("[%s] %s", v.prefix, tool)
 	}
 	tool = t.S().Base.Foreground(t.Blue).Render(tool)
 	prefix := fmt.Sprintf("%s %s ", icon, tool)
@@ -1086,17 +1092,58 @@ type subAgentRenderer struct {
 }
 
 func (sr subAgentRenderer) Render(v *toolCallCmp) string {
+	metaName := parseSubAgentName(v.result.Metadata)
 	name := prettifyToolName("Subagent")
-	if metaName := parseSubAgentName(v.result.Metadata); metaName != "" {
+	if metaName != "" {
 		name = fmt.Sprintf("Subagent %s", metaName)
+	}
+	prefix := metaName
+	if prefix == "" {
+		prefix = "subagent"
 	}
 
 	header := sr.makeHeader(v, name, v.textWidth())
-	if res, done := earlyState(header, v); done {
-		return res
+	state, done := earlyState(header, v)
+	hasNested := len(v.nestedToolCalls) > 0
+
+	var nestedSections []string
+	if hasNested {
+		indent := styles.CurrentTheme().S().Base.PaddingLeft(2)
+		width := v.textWidth()
+		for _, call := range v.nestedToolCalls {
+			call.SetPrefix(prefix)
+			call.SetSize(width-4, 1)
+			nestedSections = append(nestedSections, indent.Render(call.View()))
+		}
+	} else if done && v.result.Content == "" {
+		return state
+	}
+
+	if v.result.ToolCallID == "" {
+		v.spinning = true
+		header = lipgloss.JoinVertical(lipgloss.Left, header, "", v.anim.View())
+		if v.result.Content == "" && !hasNested {
+			return header
+		}
+	} else {
+		v.spinning = false
+	}
+
+	if v.result.Content == "" && !hasNested {
+		return header
+	}
+
+	if v.result.Content == "" {
+		if len(nestedSections) == 0 {
+			return header
+		}
+		return joinHeaderBody(header, strings.Join(nestedSections, "\n"))
 	}
 
 	body := renderSubAgentContent(v, v.result.Content)
+	if len(nestedSections) > 0 {
+		body = strings.Join(append(nestedSections, body), "\n\n")
+	}
 	return joinHeaderBody(header, body)
 }
 

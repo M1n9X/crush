@@ -13,6 +13,7 @@ import (
 	"charm.land/fantasy"
 	claude "github.com/M1n9X/claude-agent-sdk-go"
 	"github.com/M1n9X/claude-agent-sdk-go/types"
+	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/orchestrator"
 	"github.com/charmbracelet/crush/internal/permission"
 )
@@ -53,14 +54,14 @@ const (
 //go:embed claude_code.md
 var claudeCodeDescription []byte
 
-func NewClaudeCodeTool(permissions permission.Service, workingDir string) fantasy.AgentTool {
+func NewClaudeCodeTool(permissions permission.Service, messages message.Service, workingDir string) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		ClaudeCodeToolName,
 		string(claudeCodeDescription),
 		func(ctx context.Context, params ClaudeCodeParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			// Check if orchestrator is enabled
 			if params.EnableOrchestrator {
-				return runWithOrchestrator(ctx, params, call, permissions, workingDir)
+				return runWithOrchestrator(ctx, params, call, permissions, messages, workingDir)
 			}
 
 			return runSimple(ctx, params, call, permissions, workingDir)
@@ -235,6 +236,7 @@ func runWithOrchestrator(
 	params ClaudeCodeParams,
 	call fantasy.ToolCall,
 	permissions permission.Service,
+	messages message.Service,
 	workingDir string,
 ) (fantasy.ToolResponse, error) {
 	// Validate required parameters
@@ -269,7 +271,7 @@ func runWithOrchestrator(
 	}
 
 	// Create and run orchestrator
-	orch := orchestrator.NewClaudeCodeOrchestrator(permissions, execWorkingDir)
+	orch := orchestrator.NewClaudeCodeOrchestrator(permissions, messages, execWorkingDir)
 
 	// Run multi-turn orchestration
 	result, err := orch.Run(ctx, sessionID, params.Query)

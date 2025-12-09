@@ -37,7 +37,7 @@ func (m *mockClaudeCodePermissionService) Persistent() []permission.PermissionRe
 func (m *mockClaudeCodePermissionService) ClearPersistent() error                     { return nil }
 
 func TestClaudeCodeTool_Info(t *testing.T) {
-	tool := NewClaudeCodeTool(&mockClaudeCodePermissionService{shouldAllow: true}, "/tmp")
+	tool := NewClaudeCodeTool(&mockClaudeCodePermissionService{shouldAllow: true}, nil, "/tmp")
 	info := tool.Info()
 
 	require.Equal(t, ClaudeCodeToolName, info.Name)
@@ -46,7 +46,7 @@ func TestClaudeCodeTool_Info(t *testing.T) {
 }
 
 func TestClaudeCodeTool_Call_EmptyQuery(t *testing.T) {
-	tool := NewClaudeCodeTool(&mockClaudeCodePermissionService{shouldAllow: true}, "/tmp")
+	tool := NewClaudeCodeTool(&mockClaudeCodePermissionService{shouldAllow: true}, nil, "/tmp")
 
 	params := ClaudeCodeParams{
 		Query: "",
@@ -67,7 +67,7 @@ func TestClaudeCodeTool_Call_EmptyQuery(t *testing.T) {
 }
 
 func TestClaudeCodeTool_Call_PermissionDenied(t *testing.T) {
-	tool := NewClaudeCodeTool(&mockClaudeCodePermissionService{shouldAllow: false}, "/tmp")
+	tool := NewClaudeCodeTool(&mockClaudeCodePermissionService{shouldAllow: false}, nil, "/tmp")
 
 	params := ClaudeCodeParams{
 		Query: "Test query",
@@ -88,7 +88,7 @@ func TestClaudeCodeTool_Call_PermissionDenied(t *testing.T) {
 }
 
 func TestClaudeCodeTool_Call_InvalidJSON(t *testing.T) {
-	tool := NewClaudeCodeTool(&mockClaudeCodePermissionService{shouldAllow: true}, "/tmp")
+	tool := NewClaudeCodeTool(&mockClaudeCodePermissionService{shouldAllow: true}, nil, "/tmp")
 
 	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
 	result, err := tool.Run(ctx, fantasy.ToolCall{
@@ -102,7 +102,7 @@ func TestClaudeCodeTool_Call_InvalidJSON(t *testing.T) {
 }
 
 func TestClaudeCodeTool_Call_NoSessionID(t *testing.T) {
-	tool := NewClaudeCodeTool(&mockClaudeCodePermissionService{shouldAllow: true}, "/tmp")
+	tool := NewClaudeCodeTool(&mockClaudeCodePermissionService{shouldAllow: true}, nil, "/tmp")
 
 	params := ClaudeCodeParams{
 		Query: "Test query",

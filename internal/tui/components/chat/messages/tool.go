@@ -40,6 +40,7 @@ type ToolCallCmp interface {
 	GetNestedToolCalls() []ToolCallCmp // Get nested tool calls
 	SetNestedToolCalls([]ToolCallCmp)  // Set nested tool calls
 	SetIsNested(bool)                  // Set whether this tool call is nested
+	SetPrefix(string)                  // Set optional display prefix (e.g., subagent name)
 	ID() string
 	SetPermissionRequested() // Mark permission request
 	SetPermissionGranted()   // Mark permission granted
@@ -66,6 +67,7 @@ type toolCallCmp struct {
 
 	nestedToolCalls []ToolCallCmp // Nested tool calls for hierarchical display
 	expanded        bool          // Whether full output is shown (used for verbose tools)
+	prefix          string        // Optional prefix for display (e.g., subagent name)
 }
 
 // ToolCallOption provides functional options for configuring tool call components
@@ -94,6 +96,12 @@ func WithToolCallNested(isNested bool) ToolCallOption {
 func WithToolCallNestedCalls(calls []ToolCallCmp) ToolCallOption {
 	return func(m *toolCallCmp) {
 		m.nestedToolCalls = calls
+	}
+}
+
+func WithToolCallPrefix(prefix string) ToolCallOption {
+	return func(m *toolCallCmp) {
+		m.prefix = prefix
 	}
 }
 
@@ -217,6 +225,9 @@ func (m *toolCallCmp) formatToolForCopy() string {
 	var parts []string
 
 	toolName := prettifyToolName(m.call.Name)
+	if m.prefix != "" {
+		toolName = fmt.Sprintf("[%s] %s", m.prefix, toolName)
+	}
 	parts = append(parts, fmt.Sprintf("## %s Tool Call", toolName))
 
 	if m.call.Input != "" {
@@ -867,4 +878,9 @@ func (m *toolCallCmp) SetPermissionRequested() {
 // SetPermissionGranted marks that permission was granted for this tool call
 func (m *toolCallCmp) SetPermissionGranted() {
 	m.permissionGranted = true
+}
+
+// SetPrefix updates the optional display prefix (e.g., subagent name).
+func (m *toolCallCmp) SetPrefix(prefix string) {
+	m.prefix = prefix
 }

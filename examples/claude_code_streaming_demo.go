@@ -106,7 +106,7 @@ func main() {
 	}
 
 	// Create Claude Code tool
-	claudeTool := tools.NewClaudeCodeTool(permService, workspaceDir)
+	claudeTool := tools.NewClaudeCodeTool(permService, nil, workspaceDir)
 
 	// Example task - something that will use multiple tools
 	task := `Create a simple Python script that:

@@ -699,7 +699,7 @@ func (m *messageListCmp) convertAssistantMessage(msg message.Message, toolResult
 		options := m.buildToolCallOptions(tc, msg, toolResultMap)
 		uiMessages = append(uiMessages, messages.NewToolCallCmp(msg.ID, tc, m.app.Permissions, options...))
 		// If this tool call is the agent tool or agentic fetch, fetch nested tool calls
-		if tc.Name == agent.AgentToolName || tc.Name == tools.AgenticFetchToolName {
+		if tc.Name == agent.AgentToolName || tc.Name == tools.AgenticFetchToolName || tc.Name == agent.SubAgentToolName {
 			agentToolSessionID := m.app.Sessions.CreateAgentToolSessionID(msg.ID, tc.ID)
 			nestedMessages, _ := m.app.Messages.List(context.Background(), agentToolSessionID)
 			nestedToolResultMap := m.buildToolResultMap(nestedMessages)

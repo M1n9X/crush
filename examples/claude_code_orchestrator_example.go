@@ -54,7 +54,7 @@ func main() {
 	}
 
 	// Create Claude Code tool
-	claudeTool := tools.NewClaudeCodeTool(permService, workspaceDir)
+	claudeTool := tools.NewClaudeCodeTool(permService, nil, workspaceDir)
 
 	// Example: Multi-turn orchestration for complex task
 	fmt.Println("📋 Example: Multi-turn Code Generation with Orchestration")

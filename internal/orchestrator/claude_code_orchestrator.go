@@ -2,16 +2,18 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/charmbracelet/crush/internal/permission"
-	"github.com/google/uuid"
 	claude "github.com/M1n9X/claude-agent-sdk-go"
 	"github.com/M1n9X/claude-agent-sdk-go/types"
+	"github.com/charmbracelet/crush/internal/message"
+	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/google/uuid"
 )
 
 // Default configuration constants
@@ -37,6 +39,7 @@ type ClaudeCodeOrchestrator struct {
 
 	// Dependencies
 	permissions permission.Service
+	messages    message.Service
 	workingDir  string
 
 	// Logger
@@ -102,11 +105,13 @@ type OrchestratorOptions struct {
 // NewClaudeCodeOrchestrator creates a new orchestrator
 func NewClaudeCodeOrchestrator(
 	permissions permission.Service,
+	messages message.Service,
 	workingDir string,
 ) *ClaudeCodeOrchestrator {
 	return &ClaudeCodeOrchestrator{
 		sessions:    make(map[string]*OrchestratorSession),
 		permissions: permissions,
+		messages:    messages,
 		workingDir:  workingDir,
 		logger:      log.Default(),
 	}
@@ -230,6 +235,72 @@ func (o *ClaudeCodeOrchestrator) executeStep(
 			for _, block := range m.Content {
 				if textBlock, ok := block.(*types.TextBlock); ok {
 					allTextContent = append(allTextContent, textBlock.Text)
+				}
+				// Handle tool use blocks - record as tool calls
+				if toolBlock, ok := block.(*types.ToolUseBlock); ok {
+					if o.messages != nil {
+						// Create tool call message
+						toolCall := message.ToolCall{
+							ID:   toolBlock.ID,
+							Name: toolBlock.Name,
+						}
+						// Marshal input to string
+						if inputBytes, err := json.Marshal(toolBlock.Input); err == nil {
+							toolCall.Input = string(inputBytes)
+						}
+
+						_, err := o.messages.Create(ctx, session.CrushSessionID, message.CreateMessageParams{
+							Role: message.Assistant,
+							Parts: []message.ContentPart{
+								toolCall,
+							},
+						})
+						if err != nil {
+							fmt.Printf("DEBUG: Failed to write tool call to DB: %v\n", err)
+						} else {
+							fmt.Printf("DEBUG: Wrote tool call %s to DB session %s\n", toolBlock.ID, session.CrushSessionID)
+						}
+					}
+				}
+				// Handle tool result blocks - record as tool results
+				if resultBlock, ok := block.(*types.ToolResultBlock); ok {
+					if o.messages != nil {
+						var contentStr string
+						// Content can be string or []ContentBlock
+						switch c := resultBlock.Content.(type) {
+						case string:
+							contentStr = c
+						case []types.ContentBlock:
+							// For simplicity, we just say "complex content" or try to marshal it
+							// Or iterate and extract text
+							for _, cb := range c {
+								if tb, ok := cb.(*types.TextBlock); ok {
+									contentStr += tb.Text
+								}
+							}
+						default:
+							contentStr = fmt.Sprintf("%v", c)
+						}
+
+						isError := false
+						if resultBlock.IsError != nil {
+							isError = *resultBlock.IsError
+						}
+
+						// Create tool result message
+						toolResult := message.ToolResult{
+							ToolCallID: resultBlock.ToolUseID,
+							Content:    contentStr,
+							IsError:    isError,
+						}
+
+						_, _ = o.messages.Create(ctx, session.CrushSessionID, message.CreateMessageParams{
+							Role: message.Tool,
+							Parts: []message.ContentPart{
+								toolResult,
+							},
+						})
+					}
 				}
 			}
 		case *types.ResultMessage:
@@ -487,8 +558,7 @@ type NextActionDecision struct {
 
 // Adjustment represents a parameter adjustment
 type Adjustment struct {
-	Type   string      // "permission", "tool"
-	Action string      // "grant", "add", "remove"
+	Type   string // "permission", "tool"
+	Action string // "grant", "add", "remove"
 	Value  interface{}
 }
-

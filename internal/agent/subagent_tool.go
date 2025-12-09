@@ -323,9 +323,15 @@ func (c *coordinator) forwardSubAgentLogs(ctx context.Context, subSessionID, par
 		case message.Assistant:
 			text = strings.ReplaceAll(msg.Content().Text, "\r\n", "\n")
 		case message.Tool:
-			if results := msg.ToolResults(); len(results) > 0 {
-				text = strings.ReplaceAll(results[0].Content, "\r\n", "\n")
+			var parts []string
+			for _, tr := range msg.ToolResults() {
+				content := strings.TrimSpace(tr.Content)
+				if content == "" {
+					continue
+				}
+				parts = append(parts, content)
 			}
+			text = strings.Join(parts, "\n\n")
 		default:
 			continue
 		}
