@@ -41,6 +41,10 @@ This Wiki is organized into the following sections:
 - **[Contribution Guide](guides/03_Contribution_Guide.md)** - How to contribute to the project
 - **[Claude Code Integration](guides/07_Claude_Code_Integration.md)** - Configure and operate the Claude Code tool inside Crush
 
+### 🔄 Feature Comparison
+
+- **[Feature Comparison Overview](compare/00_Overview.md)** - Borrowable features from Codex and OpenCode
+
 ## 🎯 Project Overview
 
 ### Core Purpose
