@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/catwalk/pkg/catwalk"
 	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/env"
+	"github.com/charmbracelet/crush/internal/home"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -51,10 +52,23 @@ func TestConfig_setDefaults(t *testing.T) {
 	require.NotNil(t, cfg.MCP)
 	require.Equal(t, filepath.Join("/tmp", ".crush"), cfg.Options.DataDirectory)
 	require.Equal(t, "AGENTS.md", cfg.Options.InitializeAs)
+	require.Equal(t, defaultProjectDocMaxBytes, cfg.Options.ProjectDocMaxBytes)
+	require.NotNil(t, cfg.Options.ProjectDocFallbackFilenames)
+	require.NotNil(t, cfg.Options.SkillsDirs)
+	require.Contains(t, cfg.Options.SkillsDirs, filepath.Join(home.Dir(), defaultDataDirectory, "skills"))
 	for _, path := range defaultContextPaths {
 		require.Contains(t, cfg.Options.ContextPaths, path)
 	}
 	require.Equal(t, "/tmp", cfg.workingDir)
+}
+
+func TestConfig_ProjectDocMaxBytesZeroDisablesLoad(t *testing.T) {
+	cfg, err := LoadReader(strings.NewReader(`{"options":{"project_doc_max_bytes":0}}`))
+	require.NoError(t, err)
+
+	cfg.setDefaults("/tmp", "")
+
+	require.Equal(t, 0, cfg.Options.ProjectDocMaxBytes)
 }
 
 func TestConfig_configureProviders(t *testing.T) {

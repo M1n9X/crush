@@ -14,7 +14,9 @@ import (
 
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/home"
+	"github.com/charmbracelet/crush/internal/projectdoc"
 	"github.com/charmbracelet/crush/internal/shell"
+	"github.com/charmbracelet/crush/internal/skills"
 )
 
 // Prompt represents a template-based prompt generator.
@@ -142,6 +144,15 @@ func processContextPath(p string, cfg config.Config) []ContextFile {
 	return contexts
 }
 
+func contextKey(path string) string {
+	if path == "" {
+		return ""
+	}
+	cleaned := filepath.Clean(home.Long(path))
+	cleaned = filepath.ToSlash(cleaned)
+	return strings.ToLower(cleaned)
+}
+
 // expandPath expands ~ and environment variables in file paths
 func expandPath(path string, cfg config.Config) string {
 	path = home.Long(path)
@@ -159,16 +170,51 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, cfg con
 	workingDir := cmp.Or(p.workingDir, cfg.WorkingDir())
 	platform := cmp.Or(p.platform, runtime.GOOS)
 
-	files := map[string][]ContextFile{}
+	seen := map[string]struct{}{}
+	contextFiles := []ContextFile{}
+	addContexts := func(files []ContextFile) {
+		for _, cf := range files {
+			if cf.Content == "" {
+				continue
+			}
+			key := contextKey(cf.Path)
+			if key != "" {
+				if _, ok := seen[key]; ok {
+					continue
+				}
+				seen[key] = struct{}{}
+			}
+			contextFiles = append(contextFiles, cf)
+		}
+	}
+
+	// Project instruction docs (AGENTS-like).
+	if docs, warnings := projectdoc.Load(&cfg); len(docs) > 0 || len(warnings) > 0 {
+		for _, warn := range warnings {
+			slog.Warn("project doc warning", "warning", warn)
+		}
+		var docFiles []ContextFile
+		for _, doc := range docs {
+			docFiles = append(docFiles, ContextFile{Path: doc.Path, Content: doc.Content})
+		}
+		addContexts(docFiles)
+	}
+
+	// Reusable skills summary.
+	if result := skills.Load(&cfg); len(result.Skills) > 0 || len(result.Errors) > 0 {
+		for _, err := range result.Errors {
+			slog.Warn("skill load error", "path", err.Path, "error", err.Err)
+		}
+		if summary := skills.RenderSummary(result.Skills, result.Roots); summary != "" {
+			addContexts([]ContextFile{{
+				Path:    "skills-summary",
+				Content: summary,
+			}})
+		}
+	}
 
 	for _, pth := range cfg.Options.ContextPaths {
-		expanded := expandPath(pth, cfg)
-		pathKey := strings.ToLower(expanded)
-		if _, ok := files[pathKey]; ok {
-			continue
-		}
-		content := processContextPath(expanded, cfg)
-		files[pathKey] = content
+		addContexts(processContextPath(expandPath(pth, cfg), cfg))
 	}
 
 	isGit := isGitRepo(cfg.WorkingDir())
@@ -189,9 +235,7 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, cfg con
 		}
 	}
 
-	for _, contextFiles := range files {
-		data.ContextFiles = append(data.ContextFiles, contextFiles...)
-	}
+	data.ContextFiles = append(data.ContextFiles, contextFiles...)
 
 	if p.memory != nil {
 		memFiles, err := p.memory()

@@ -3,6 +3,7 @@ package config
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -23,9 +24,10 @@ import (
 )
 
 const (
-	appName              = "crush"
-	defaultDataDirectory = ".crush"
-	defaultInitializeAs  = "AGENTS.md"
+	appName                   = "crush"
+	defaultDataDirectory      = ".crush"
+	defaultInitializeAs       = "AGENTS.md"
+	defaultProjectDocMaxBytes = 32 * 1024
 )
 
 var defaultContextPaths = []string{
@@ -246,20 +248,44 @@ func (Attribution) JSONSchemaExtend(schema *jsonschema.Schema) {
 }
 
 type Options struct {
-	ContextPaths              []string     `json:"context_paths,omitempty" jsonschema:"description=Paths to files containing context information for the AI,example=.cursorrules,example=CRUSH.md"`
-	TUI                       *TUIOptions  `json:"tui,omitempty" jsonschema:"description=Terminal user interface options"`
-	Debug                     bool         `json:"debug,omitempty" jsonschema:"description=Enable debug logging,default=false"`
-	DebugLSP                  bool         `json:"debug_lsp,omitempty" jsonschema:"description=Enable debug logging for LSP servers,default=false"`
-	DisableAutoSummarize      bool         `json:"disable_auto_summarize,omitempty" jsonschema:"description=Disable automatic conversation summarization,default=false"`
-	DisableThinkingControls   bool         `json:"disable_thinking_controls,omitempty" jsonschema:"description=Disable keyword-based thinking/reasoning overrides,default=false"`
-	DataDirectory             string       `json:"data_directory,omitempty" jsonschema:"description=Directory for storing application data (relative to working directory),default=.crush,example=.crush"` // Relative to the cwd
-	ToolsManifest             string       `json:"tools_manifest,omitempty" jsonschema:"description=Path to a tools manifest (JSON) declaring capability descriptors,example=.crush/tools.json"`
-	PluginsManifest           string       `json:"plugins_manifest,omitempty" jsonschema:"description=Path to a plugins manifest (JSON) declaring plugin descriptors"`
-	DisabledTools             []string     `json:"disabled_tools" jsonschema:"description=Tools to disable"`
-	DisableProviderAutoUpdate bool         `json:"disable_provider_auto_update,omitempty" jsonschema:"description=Disable providers auto-update,default=false"`
-	Attribution               *Attribution `json:"attribution,omitempty" jsonschema:"description=Attribution settings for generated content"`
-	DisableMetrics            bool         `json:"disable_metrics,omitempty" jsonschema:"description=Disable sending metrics,default=false"`
-	InitializeAs              string       `json:"initialize_as,omitempty" jsonschema:"description=Name of the context file to create/update during project initialization,default=AGENTS.md,example=AGENTS.md,example=CRUSH.md,example=CLAUDE.md,example=docs/LLMs.md"`
+	ContextPaths                []string     `json:"context_paths,omitempty" jsonschema:"description=Paths to files containing context information for the AI,example=.cursorrules,example=CRUSH.md"`
+	ProjectDocFallbackFilenames []string     `json:"project_doc_fallback_filenames,omitempty" jsonschema:"description=Additional filenames to consider for project instructions after AGENTS files,example=TEAM_GUIDE.md,example=docs/LLMs.md"`
+	ProjectDocMaxBytes          int          `json:"project_doc_max_bytes,omitempty" jsonschema:"description=Maximum total bytes to read from project instruction files,default=32768,minimum=0"`
+	projectDocMaxBytesSet       bool         `json:"-"`
+	SkillsDirs                  []string     `json:"skills_dirs,omitempty" jsonschema:"description=Roots to search recursively for SKILL.md files,example=~/.crush/skills,example=.crush/skills"`
+	TUI                         *TUIOptions  `json:"tui,omitempty" jsonschema:"description=Terminal user interface options"`
+	Debug                       bool         `json:"debug,omitempty" jsonschema:"description=Enable debug logging,default=false"`
+	DebugLSP                    bool         `json:"debug_lsp,omitempty" jsonschema:"description=Enable debug logging for LSP servers,default=false"`
+	DisableAutoSummarize        bool         `json:"disable_auto_summarize,omitempty" jsonschema:"description=Disable automatic conversation summarization,default=false"`
+	DisableThinkingControls     bool         `json:"disable_thinking_controls,omitempty" jsonschema:"description=Disable keyword-based thinking/reasoning overrides,default=false"`
+	DataDirectory               string       `json:"data_directory,omitempty" jsonschema:"description=Directory for storing application data (relative to working directory),default=.crush,example=.crush"` // Relative to the cwd
+	ToolsManifest               string       `json:"tools_manifest,omitempty" jsonschema:"description=Path to a tools manifest (JSON) declaring capability descriptors,example=.crush/tools.json"`
+	PluginsManifest             string       `json:"plugins_manifest,omitempty" jsonschema:"description=Path to a plugins manifest (JSON) declaring plugin descriptors"`
+	DisabledTools               []string     `json:"disabled_tools" jsonschema:"description=Tools to disable"`
+	DisableProviderAutoUpdate   bool         `json:"disable_provider_auto_update,omitempty" jsonschema:"description=Disable providers auto-update,default=false"`
+	Attribution                 *Attribution `json:"attribution,omitempty" jsonschema:"description=Attribution settings for generated content"`
+	DisableMetrics              bool         `json:"disable_metrics,omitempty" jsonschema:"description=Disable sending metrics,default=false"`
+	InitializeAs                string       `json:"initialize_as,omitempty" jsonschema:"description=Name of the context file to create/update during project initialization,default=AGENTS.md,example=AGENTS.md,example=CRUSH.md,example=CLAUDE.md,example=docs/LLMs.md"`
+}
+
+func (o *Options) UnmarshalJSON(data []byte) error {
+	type alias Options
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+
+	*o = Options(decoded)
+	if _, ok := raw["project_doc_max_bytes"]; ok {
+		o.projectDocMaxBytesSet = true
+	}
+	return nil
 }
 
 type MCPs map[string]MCPConfig

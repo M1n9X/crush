@@ -362,6 +362,15 @@ func (c *Config) setDefaults(workingDir, dataDir string) {
 	if c.Options.TUI == nil {
 		c.Options.TUI = &TUIOptions{}
 	}
+	if c.Options.ProjectDocFallbackFilenames == nil {
+		c.Options.ProjectDocFallbackFilenames = []string{}
+	}
+	if !c.Options.projectDocMaxBytesSet && c.Options.ProjectDocMaxBytes == 0 {
+		c.Options.ProjectDocMaxBytes = defaultProjectDocMaxBytes
+	}
+	if c.Options.SkillsDirs == nil {
+		c.Options.SkillsDirs = []string{filepath.Join(home.Dir(), defaultDataDirectory, "skills")}
+	}
 	if c.Options.ContextPaths == nil {
 		c.Options.ContextPaths = []string{}
 	}
