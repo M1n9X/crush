@@ -91,3 +91,19 @@ func isSubagentMode(profile subagent.Profile) bool {
 	}
 	return false
 }
+
+// deriveSandbox picks an execution sandbox based on the profile permissions.
+// Default: read-only; allow/ask edits -> workspace-write; explicit danger/full -> danger-full-access.
+func deriveSandbox(profile *subagent.Profile) subagent.SandboxMode {
+	if profile == nil {
+		return subagent.SandboxReadOnly
+	}
+	switch strings.ToLower(strings.TrimSpace(profile.Permissions.Edit)) {
+	case "allow", "ask":
+		return subagent.SandboxWorkspaceWrite
+	case "danger", "full":
+		return subagent.SandboxDangerFullAccess
+	default:
+		return subagent.SandboxReadOnly
+	}
+}

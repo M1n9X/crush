@@ -16,6 +16,7 @@ import (
 	"sync"
 
 	"charm.land/fantasy"
+	codexsdk "github.com/M1n9X/codex-sdk-go"
 	"github.com/charmbracelet/catwalk/pkg/catwalk"
 	"github.com/charmbracelet/crush/internal/agent/capability"
 	"github.com/charmbracelet/crush/internal/agent/prompt"
@@ -196,10 +197,7 @@ func (c *coordinator) subagentRegistry(_ context.Context) (*subagent.Registry, e
 	profiles := definitionsToProfiles(defs)
 
 	claude := newClaudeCodeSubagent(c)
-	codexAgent := subagent.NewCodexSubagent(subagent.CodexOptions{
-		WorkingDirectory: c.cfg.WorkingDir(),
-		DefaultSandbox:   subagent.SandboxReadOnly,
-	})
+	codexAgent := subagent.NewCodexSubagent(c.buildCodexOptions())
 
 	registry := subagent.NewRegistry(claude)
 	for _, profile := range profiles {
@@ -218,6 +216,146 @@ func (c *coordinator) subagentRegistry(_ context.Context) (*subagent.Registry, e
 
 	c.subagents = registry
 	return registry, nil
+}
+
+func (c *coordinator) buildCodexOptions() subagent.CodexOptions {
+	opts := subagent.CodexOptions{
+		WorkingDirectory: c.cfg.WorkingDir(),
+		DefaultSandbox:   subagent.SandboxReadOnly,
+	}
+
+	if v := strings.TrimSpace(os.Getenv("CODEX_PATH")); v != "" {
+		opts.CodexPath = v
+	}
+	if v := strings.TrimSpace(os.Getenv("CODEX_BASE_URL")); v != "" {
+		opts.BaseURL = v
+	}
+	if v := strings.TrimSpace(os.Getenv("CODEX_API_KEY")); v != "" {
+		opts.APIKey = v
+	}
+	if v := strings.TrimSpace(os.Getenv("CODEX_MODEL")); v != "" {
+		opts.DefaultModel = v
+	}
+	if v := parseCodexSandbox(os.Getenv("CODEX_SANDBOX_MODE")); v != "" {
+		opts.DefaultSandbox = v
+	}
+	if v := parseCodexApprovalMode(os.Getenv("CODEX_APPROVAL_MODE")); v != "" {
+		opts.DefaultApprovalMode = v
+	}
+	if v := parseCodexReasoning(os.Getenv("CODEX_MODEL_REASONING")); v != "" {
+		opts.ModelReasoning = v
+	}
+	if v := parseBoolPtr(os.Getenv("CODEX_NETWORK_ACCESS")); v != nil {
+		opts.NetworkAccess = v
+	}
+	if v := parseBoolPtr(os.Getenv("CODEX_WEB_SEARCH")); v != nil {
+		opts.WebSearch = v
+	}
+	if v := parseBoolPtr(os.Getenv("CODEX_SKIP_GIT_CHECK")); v != nil {
+		opts.SkipGitRepoCheck = *v
+	}
+	if v := parseAdditionalDirectories(os.Getenv("CODEX_ADDITIONAL_DIRS")); len(v) > 0 {
+		opts.AdditionalDirectories = v
+	}
+	if envMap := parseEnvMap(os.Getenv("CODEX_ENV")); len(envMap) > 0 {
+		opts.Env = envMap
+	}
+
+	return opts
+}
+
+func parseCodexSandbox(raw string) subagent.SandboxMode {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "danger-full-access":
+		return subagent.SandboxDangerFullAccess
+	case "workspace-write":
+		return subagent.SandboxWorkspaceWrite
+	case "read-only":
+		return subagent.SandboxReadOnly
+	default:
+		return ""
+	}
+}
+
+func parseCodexApprovalMode(raw string) codexsdk.ApprovalMode {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "never", "approvalnever":
+		return codexsdk.ApprovalNever
+	case "on-request", "approvalonrequest", "request":
+		return codexsdk.ApprovalOnRequest
+	case "on-failure", "approvalonfailure", "failure":
+		return codexsdk.ApprovalOnFailure
+	case "untrusted", "approvaluntrusted":
+		return codexsdk.ApprovalUntrusted
+	default:
+		return ""
+	}
+}
+
+func parseCodexReasoning(raw string) codexsdk.ModelReasoningEffort {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "minimal":
+		return codexsdk.ReasoningMinimal
+	case "low":
+		return codexsdk.ReasoningLow
+	case "medium":
+		return codexsdk.ReasoningMedium
+	case "high":
+		return codexsdk.ReasoningHigh
+	default:
+		return ""
+	}
+}
+
+func parseBoolPtr(raw string) *bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "t", "true", "yes", "y", "on":
+		v := true
+		return &v
+	case "0", "f", "false", "no", "n", "off":
+		v := false
+		return &v
+	default:
+		return nil
+	}
+}
+
+func parseAdditionalDirectories(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	parts := strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ';' })
+	var dirs []string
+	for _, part := range parts {
+		if v := strings.TrimSpace(part); v != "" {
+			dirs = append(dirs, v)
+		}
+	}
+	return dirs
+}
+
+func parseEnvMap(raw string) map[string]string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	pairs := strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ';' })
+	result := make(map[string]string, len(pairs))
+	for _, pair := range pairs {
+		if pair == "" {
+			continue
+		}
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		val := strings.TrimSpace(parts[1])
+		if key == "" {
+			continue
+		}
+		result[key] = val
+	}
+	return result
 }
 
 // Run implements Coordinator.

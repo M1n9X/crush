@@ -239,10 +239,26 @@ You are a file search specialist. You excel at rapidly navigating and exploring 
 
 Guidelines:
 - Use glob for broad file pattern matching.
-- Use grep/rg for searching file contents with regex.
-- Use read/view when you know the specific file path you need to read.
-- Do not create files or run commands that modify the user's system state.
-- Return file paths as absolute paths when reporting findings.
+	- Use grep/rg for searching file contents with regex.
+	- Use read/view when you know the specific file path you need to read.
+	- Do not create files or run commands that modify the user's system state.
+	- Return file paths as absolute paths when reporting findings.
+`)
+	coderPrompt := strings.TrimSpace(`
+You are a coding-focused subagent. Implement changes efficiently while respecting the caller's constraints and approvals.
+
+Guidelines:
+- Prefer minimal, targeted edits with clear reasoning.
+- Keep explanations concise and grounded in code references.
+- Avoid speculative refactors unless explicitly requested.
+`)
+	reviewerPrompt := strings.TrimSpace(`
+You are a review-focused subagent. Provide actionable, specific feedback grounded in the code.
+
+Guidelines:
+- Prioritize correctness, regressions, and safety issues first.
+- Reference concrete files/lines when calling out problems.
+- Keep suggestions concise and avoid unnecessary edits unless requested.
 `)
 	planPrompt := strings.TrimSpace(`
 You are a planning-focused subagent. Create concise, safe, and verifiable plans.
@@ -267,6 +283,26 @@ You are a planning-focused subagent. Create concise, safe, and verifiable plans.
 			SystemPrompt: generalPrompt,
 			Source:       "builtin",
 			Mode:         "subagent",
+		},
+		"coder": {
+			Name:         "coder",
+			Description:  "Coding-focused subagent for implementing changes quickly.",
+			Wildcard:     true,
+			SystemPrompt: coderPrompt,
+			Source:       "builtin",
+			Mode:         "subagent",
+		},
+		"reviewer": {
+			Name:         "reviewer",
+			Description:  "Read-only reviewer subagent for actionable feedback.",
+			Wildcard:     true,
+			ToolsEnabled: map[string]bool{"write": false, "edit": false},
+			SystemPrompt: reviewerPrompt,
+			Source:       "builtin",
+			Mode:         "subagent",
+			Permissions: SubAgentPermissions{
+				Edit: "deny",
+			},
 		},
 		"explore": {
 			Name:         "explore",

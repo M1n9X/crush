@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/M1n9X/claude-agent-sdk-go/types"
@@ -94,6 +95,83 @@ func TestClaudeSubagentExecuteStreamed(t *testing.T) {
 	require.ElementsMatch(t, []string{"write", "edit"}, capturedOpts.AllowedTools)
 	require.NotNil(t, capturedOpts.Model)
 	require.Equal(t, "claude-test", *capturedOpts.Model)
+}
+
+func TestBuildSubagentPrompt(t *testing.T) {
+	t.Run("task only", func(t *testing.T) {
+		req := subagent.Request{Task: "do the thing"}
+		result := buildSubagentPrompt(req)
+		require.Equal(t, "do the thing", result)
+	})
+
+	t.Run("with profile description", func(t *testing.T) {
+		req := subagent.Request{
+			Task:    "do the thing",
+			Profile: &subagent.Profile{Description: "You are a coder."},
+		}
+		result := buildSubagentPrompt(req)
+		require.Contains(t, result, "You are a coder.")
+		require.Contains(t, result, "Task: do the thing")
+	})
+
+	t.Run("with request description", func(t *testing.T) {
+		req := subagent.Request{
+			Task:        "do the thing",
+			Description: "Extra context here",
+		}
+		result := buildSubagentPrompt(req)
+		require.Contains(t, result, "Extra context here")
+		require.Contains(t, result, "Task: do the thing")
+	})
+
+	t.Run("with ContextJSON", func(t *testing.T) {
+		req := subagent.Request{
+			Task:        "review this code",
+			ContextJSON: json.RawMessage(`{"files":["a.go","b.go"],"diff":"+ some changes"}`),
+		}
+		result := buildSubagentPrompt(req)
+		require.Contains(t, result, "review this code")
+		require.Contains(t, result, "Context:")
+		require.Contains(t, result, `"files"`)
+		require.Contains(t, result, `"a.go"`)
+		require.Contains(t, result, `"diff"`)
+	})
+
+	t.Run("with profile description and ContextJSON", func(t *testing.T) {
+		req := subagent.Request{
+			Task:        "implement feature",
+			Profile:     &subagent.Profile{Description: "You are a coder."},
+			Description: "High priority",
+			ContextJSON: json.RawMessage(`{"plan":"step 1, step 2"}`),
+		}
+		result := buildSubagentPrompt(req)
+		require.Contains(t, result, "You are a coder.")
+		require.Contains(t, result, "High priority")
+		require.Contains(t, result, "Task: implement feature")
+		require.Contains(t, result, "Context:")
+		require.Contains(t, result, `"plan"`)
+	})
+
+	t.Run("ContextJSON pretty-printed", func(t *testing.T) {
+		req := subagent.Request{
+			Task:        "review",
+			ContextJSON: json.RawMessage(`{"key":"value"}`),
+		}
+		result := buildSubagentPrompt(req)
+		// Should have newlines from pretty-printing
+		require.Contains(t, result, "{\n  \"key\": \"value\"\n}")
+	})
+
+	t.Run("invalid ContextJSON falls back to raw", func(t *testing.T) {
+		req := subagent.Request{
+			Task:        "review",
+			ContextJSON: json.RawMessage(`not valid json at all`),
+		}
+		result := buildSubagentPrompt(req)
+		// Should still include the raw context since pretty-print fails
+		require.Contains(t, result, "Context:")
+		require.Contains(t, result, "not valid json at all")
+	})
 }
 
 type fakeClaudeClient struct {

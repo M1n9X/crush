@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"charm.land/fantasy"
@@ -100,13 +101,21 @@ func (c *coordinator) subAgentTool(ctx context.Context) (fantasy.AgentTool, erro
 			defer progressCancel()
 			go c.forwardSubAgentLogs(progressCtx, targetSessionID, parentSessionID, call.ID, profile.Name)
 
+			metadata := map[string]string{
+				"parent_session_id": parentSessionID,
+				"tool_call_id":      call.ID,
+			}
+			if profile.MaxSteps > 0 {
+				metadata["max_steps"] = strconv.Itoa(profile.MaxSteps)
+			}
+			if color := strings.TrimSpace(profile.Color); color != "" {
+				metadata["color"] = color
+			}
+
 			req := subagent.Request{
-				Task:    params.Prompt,
-				Sandbox: subagent.SandboxReadOnly,
-				Metadata: map[string]string{
-					"parent_session_id": parentSessionID,
-					"tool_call_id":      call.ID,
-				},
+				Task:        params.Prompt,
+				Sandbox:     deriveSandbox(&profile),
+				Metadata:    metadata,
 				Profile:     &profile,
 				SessionID:   targetSessionID,
 				ParentID:    parentSessionID,

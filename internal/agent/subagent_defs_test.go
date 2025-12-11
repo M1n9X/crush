@@ -57,6 +57,8 @@ func TestLoadSubAgentDefinitions_IncludesBuiltins(t *testing.T) {
 
 	require.True(t, names["general"], "missing builtin general")
 	require.True(t, names["general-purpose"], "missing builtin general-purpose")
+	require.True(t, names["coder"], "missing builtin coder")
+	require.True(t, names["reviewer"], "missing builtin reviewer")
 	require.True(t, names["explore"], "missing builtin explore")
 	require.True(t, names["plan"], "missing builtin plan")
 }

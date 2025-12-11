@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -311,7 +313,7 @@ func (c *ClaudeCodeSubagent) renderSystemPrompt(ctx context.Context, profile *su
 func buildSubagentPrompt(req subagent.Request) string {
 	fullPrompt := strings.TrimSpace(req.Task)
 	var descParts []string
-	if strings.TrimSpace(req.Profile.Description) != "" {
+	if req.Profile != nil && strings.TrimSpace(req.Profile.Description) != "" {
 		descParts = append(descParts, strings.TrimSpace(req.Profile.Description))
 	}
 	if strings.TrimSpace(req.Description) != "" {
@@ -319,6 +321,15 @@ func buildSubagentPrompt(req subagent.Request) string {
 	}
 	if len(descParts) > 0 {
 		fullPrompt = fmt.Sprintf("%s\n\nTask: %s", strings.Join(descParts, "\n"), req.Task)
+	}
+
+	if len(req.ContextJSON) > 0 {
+		ctxBlock := string(req.ContextJSON)
+		var pretty bytes.Buffer
+		if err := json.Indent(&pretty, req.ContextJSON, "", "  "); err == nil {
+			ctxBlock = pretty.String()
+		}
+		fullPrompt = fmt.Sprintf("%s\n\nContext:\n%s", fullPrompt, ctxBlock)
 	}
 	return fullPrompt
 }
