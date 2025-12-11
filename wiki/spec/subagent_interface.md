@@ -38,11 +38,12 @@ type Result struct {
 }
 
 // SandboxMode 控制 Agent 的执行权限级别
+// 注意：Crush 使用统一的 SandboxMode 抽象，需要映射到各 Agent 的具体实现
 type SandboxMode string
 const (
-    SandboxReadOnly       SandboxMode = "read-only"        // 只读，无文件/命令写入
-    SandboxApprovalRequired SandboxMode = "approval-required" // 需审批才可执行写操作
-    SandboxFullAuto       SandboxMode = "full-auto"        // 完全自动，需显式批准启用
+    SandboxReadOnly         SandboxMode = "read-only"          // 只读，无文件/命令写入
+    SandboxWorkspaceWrite   SandboxMode = "workspace-write"    // 可写入工作区目录
+    SandboxDangerFullAccess SandboxMode = "danger-full-access" // 完全访问，需显式批准启用
 )
 
 // Attachment 复用现有 message.Attachment
@@ -87,13 +88,31 @@ type Artifact struct {
 - `Execute`: 调用现有 session agent；返回 resume id、usage、diff/patch summary。
 - `Resume`: 复用 session id 继续对话。
 
-## Codex Adapter (示意)
+## Codex Adapter (实现)
+
+基于已完成的 Golang SDK (`github.com/M1n9X/codex-sdk-go`)：
 
 - `Capabilities`: `["review","brainstorm","plan","code"]`（可配置）。
-- `SupportsResume`: true（thread id）。
-- `Execute`: 使用 Codex Go SDK `Exec`/`Run`，支持 `sandbox/full-auto/enable/output-schema/plan-tool`。
-- `Resume`: 调用 `resume <thread>`。
-- 复用 myclaude codex-wrapper 的日志/超时/stderr 处理策略。
+- `SupportsResume`: true（thread id，通过 `Thread.ID()` 获取）。
+- `Execute`:
+  - 客户端选项：`codex.WithCodexPath`（自定义二进制）、`codex.WithBaseURL`、`codex.WithAPIKey`、`codex.WithEnv`
+  - 创建客户端: `codex.New()`
+  - 开始会话: `client.StartThread(opts...)` 支持配置:
+    - `codex.WithModel("gpt-4")` - 模型选择
+    - `codex.WithSandboxMode(codex.SandboxReadOnly | codex.SandboxWorkspaceWrite | codex.SandboxDangerFullAccess)` - 沙箱权限
+    - `codex.WithApprovalPolicy(codex.ApprovalNever | codex.ApprovalOnRequest | codex.ApprovalOnFailure | codex.ApprovalUntrusted)` - 审批策略
+    - `codex.WithWorkingDirectory(dir)` - 工作目录
+    - `codex.WithSkipGitRepoCheck()` - 跳过工作目录 Git 检查
+    - `codex.WithAdditionalDirectories("../shared", "/tmp")` - 额外可访问目录
+    - `codex.WithModelReasoningEffort(codex.ReasoningHigh)` - 推理强度
+    - `codex.WithNetworkAccess(true)` / `codex.WithWebSearch(true)` - 网络/搜索
+  - 执行: `thread.Run(ctx, codex.Text(prompt), opts...)` 返回 `*Turn`
+  - 流式: `thread.RunStreamed(ctx, input)` 返回 `*StreamedTurn` (含 `Events <-chan ThreadEvent`)
+  - 结构化输出: `codex.WithOutputSchema(schema)` - JSON Schema
+  - 图片输入: `codex.Compose(codex.TextPart("prompt"), codex.ImagePart("/path/to/image.png"))`
+- `Resume`: 调用 `client.ResumeThread(threadID, opts...)`，继续已有会话。
+- **事件类型**: `thread.started`, `turn.started/completed/failed`, `item.started/updated/completed`, `error`
+- **Item 类型**: `agent_message`, `reasoning`, `command_execution`, `file_change`, `mcp_tool_call`, `web_search`, `todo_list`, `error`
 
 ---
 

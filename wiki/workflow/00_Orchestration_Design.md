@@ -13,7 +13,7 @@
 关键思路：
 
 - **统一 Subagent 层**：在现有 `internal/agent` 上扩展，吸收 opencode 的模式（primary/subagent/all、权限/模型/工具矩阵、内置 general/explore/plan），避免平行的第二套 Registry。
-- **Codex Go SDK 一等公民**：基于 `CODEX-SDK-GO/openai`（对齐官方 TS SDK）完成 SDK，暴露 Exec/Resume/事件流；在 Crush 中作为模型提供者 + Subagent 适配层。
+- **Codex Go SDK 一等公民**：基于 `github.com/M1n9X/codex-sdk-go`（对齐官方 TS SDK）完成 SDK，暴露 Thread.Run/RunStreamed/事件流；在 Crush 中作为模型提供者 + Subagent 适配层。
 - **单一工作流引擎**：替换/封装当前 `ClaudeCodeOrchestrator`，状态机驱动多阶段步骤，所有 agent 调用通过 Subagent 接口（Claude Code 或 Codex）。
 - **健壮状态管理**：借鉴 humanlayer 的三分模型（存储结构/Info 视图/Update 补丁）+ 细粒度状态机（running/interrupted/waiting_input 等）+ 事件总线，持久化走 SQLite/SQLC/触发器。
 - **上下文与安全内建**：ContextBuilder 生成最小必要审查上下文；Safety Hooks/权限服务处理危险操作和审批；审批/暂停/恢复是默认能力。
@@ -48,7 +48,7 @@
 | **opencode** (`packages/opencode/src/agent/agent.ts`, `tool/task.ts`) | Agent 模式 primary/subagent/all，内置 general/explore/plan，权限矩阵/模型覆盖，子任务工具生成子会话并路由结果，父子会话导航 |
 | **humanlayer** (`hld/session`, `hld/store`) | Session 状态机（draft/starting/running/waiting_input/interrupted/...），三分结构（存储/Info/Update），事件总线 + 审批存储，恢复/中断 |
 | **agentsdk-go** | Model/ToolExecutor 分离，middleware 链接可插拔观测/安全；超时/重试上限 |
-| **CODEX-SDK-GO/openai** + TS SDK | Exec/Resume 参数面（sandbox/full-auto/enable/output-schema/resume by thread），事件流解码，originator/env 注入 |
+| **codex-sdk-go** + TS SDK | StartThread/ResumeThread、Run/RunStreamed、事件流解码（ThreadEvent/ThreadItem），SandboxMode/ApprovalMode，originator/env 注入 |
 | **codex-mcp-server** | MCP 工具暴露/提示管理，可作为 Codex/Claude 的上下文工具源 |
 | **Antigravity workflow** | Service Registry + Trajectory 状态机，步骤抽象与审批/安全门控 |
 
@@ -87,8 +87,26 @@ Context/Safety (ContextBuilder, Permission/Safety hooks)
 
 ### 4.3 Codex Go SDK & Adapter
 
-- **SDK**：在 `internal/codexsdk`（或独立 module）实现与 TS SDK 对齐的 API：`Exec`/`Run` 支持 `--sandbox/--full-auto/--enable/--include-plan-tool/--output-schema/--image/--config/--resume(thread)`，事件流解码，stderr/退出码处理，originator/env 注入。补齐测试（stderr、timeout、resume、feature flags）。
-- **Adapter**：Subagent 包装 SDK，暴露 `Execute(ctx, req)`/`Resume(ctx, sessionID, prompt)`，输出 session/thread id 供恢复；支持最小上下文注入（见 ContextBuilder）。
+**SDK 已实现**（`github.com/M1n9X/codex-sdk-go`），完全对齐官方 TypeScript SDK：
+
+- **核心 API**：
+  - `codex.New(opts...)` 创建客户端，支持 `WithCodexPath`/`WithBaseURL`/`WithAPIKey`/`WithEnv`
+  - `Codex.StartThread(opts...)` / `Codex.ResumeThread(id, opts...)` 管理会话
+  - `Thread.Run(ctx, input, opts...)` 同步执行，返回 `*Turn`
+  - `Thread.RunStreamed(ctx, input, opts...)` 流式执行，返回 `*StreamedTurn` (含 `Events <-chan ThreadEvent`)
+
+- **配置选项**：
+  - `SandboxMode`: `read-only` / `workspace-write` / `danger-full-access`
+  - `ApprovalMode`: `never` / `on-request` / `on-failure` / `untrusted`
+  - `ModelReasoningEffort`: `minimal` / `low` / `medium` / `high`
+  - `ThreadOptions`: Model, WorkingDirectory, SkipGitRepoCheck, NetworkAccess, WebSearch, AdditionalDirectories
+  - `TurnOptions`: OutputSchema (结构化输出)
+
+- **事件流**：`ThreadEvent` 类型包括 `thread.started`, `turn.started/completed/failed`, `item.started/updated/completed`, `error`
+- **ThreadItem 类型**：`agent_message`, `reasoning`, `command_execution`, `file_change`, `mcp_tool_call`, `web_search`, `todo_list`, `error`
+- **Input 构建**：`codex.Text(prompt)` 或 `codex.Compose(TextPart(...), ImagePart(...))`
+
+- **Adapter**：Subagent 包装 SDK，暴露 `Execute(ctx, req)`/`Resume(ctx, sessionID, prompt)`，输出 thread id 供恢复；支持最小上下文注入（见 ContextBuilder）。
 
 ### 4.4 Workflow Engine
 
@@ -392,7 +410,7 @@ const (
 
 ### 8.2 Codex SDK 集成路径
 
-**当前状态**: 项目中不存在 `internal/codexsdk` 目录。
+**当前状态**: ✅ Golang SDK 已完成移植 (`github.com/M1n9X/codex-sdk-go`)，完全对齐官方 TypeScript SDK。
 
 **集成方案**:
 
@@ -400,7 +418,7 @@ const (
 
    ```go
    // go.mod
-   require github.com/M1n9X/codex-sdk-go v0.x.x
+   require github.com/M1n9X/codex-sdk-go v0.0.1
    ```
 
 2. **Adapter 封装**:
@@ -409,24 +427,110 @@ const (
    // internal/subagent/codex.go
    package subagent
 
-   import codex "github.com/M1n9X/codex-sdk-go"
+   import (
+       "context"
+       codex "github.com/M1n9X/codex-sdk-go"
+   )
 
    type CodexSubagent struct {
-       client *codex.Client
+       client *codex.Codex
        config CodexConfig
    }
 
    type CodexConfig struct {
-       Sandbox   SandboxMode
-       Model     string
-       MaxTokens int
+       Sandbox            codex.SandboxMode
+       Model              string
+       ApprovalPolicy     codex.ApprovalMode
+       WorkingDirectory   string
+       ReasoningEffort    codex.ModelReasoningEffort
    }
+
+   func NewCodexSubagent(cfg CodexConfig) (*CodexSubagent, error) {
+       client, err := codex.New()
+       if err != nil {
+           return nil, err
+       }
+       return &CodexSubagent{client: client, config: cfg}, nil
+   }
+
+   func (c *CodexSubagent) Execute(ctx context.Context, req Request) (*Result, error) {
+       thread := c.client.StartThread(
+           codex.WithModel(c.config.Model),
+           codex.WithSandboxMode(c.config.Sandbox),
+           codex.WithWorkingDirectory(c.config.WorkingDirectory),
+           codex.WithApprovalPolicy(c.config.ApprovalPolicy),
+           codex.WithModelReasoningEffort(c.config.ReasoningEffort),
+           // 可选：codex.WithSkipGitRepoCheck(), codex.WithAdditionalDirectories("/shared")
+       )
+
+       turn, err := thread.Run(ctx, codex.Text(req.Task))
+       if err != nil {
+           return nil, err
+       }
+
+       return &Result{
+           Text:        turn.FinalResponse,
+           ResumeToken: thread.ID(),
+           Usage: Usage{
+               PromptTokens:     int64(turn.Usage.InputTokens),
+               CompletionTokens: int64(turn.Usage.OutputTokens),
+               TotalTokens:      int64(turn.Usage.InputTokens + turn.Usage.OutputTokens),
+           },
+       }, nil
+   }
+
+    func (c *CodexSubagent) Resume(ctx context.Context, threadID string, req Request) (*Result, error) {
+        thread := c.client.ResumeThread(threadID,
+            codex.WithModel(c.config.Model),
+            codex.WithSandboxMode(c.config.Sandbox),
+        )
+
+        turn, err := thread.Run(ctx, codex.Text(req.Task))
+        if err != nil {
+            return nil, err
+        }
+
+        return &Result{
+            Text:        turn.FinalResponse,
+            ResumeToken: thread.ID(),
+            Usage: Usage{
+                PromptTokens:     int64(turn.Usage.InputTokens),
+                CompletionTokens: int64(turn.Usage.OutputTokens),
+                TotalTokens:      int64(turn.Usage.InputTokens + turn.Usage.OutputTokens),
+            },
+        }, nil
+    }
    ```
 
-3. **CLI Wrapper 备选**（当 SDK 不可用时）:
-   - 复用 `myclaude/codex-wrapper` 的 CLI 封装模式
-   - 通过 `exec.Command` 调用 `codex` CLI
-   - 解析 stdout/stderr 提取结果
+3. **流式执行示例**:
+
+   ```go
+   func (c *CodexSubagent) ExecuteStreamed(ctx context.Context, req Request, handler func(codex.ThreadEvent)) (*Result, error) {
+       thread := c.client.StartThread(codex.WithModel(c.config.Model))
+       streamed, err := thread.RunStreamed(ctx, codex.Text(req.Task))
+       if err != nil {
+           return nil, err
+       }
+
+       var items []codex.ThreadItem
+       var finalResponse string
+       for event := range streamed.Events {
+           handler(event) // 回调事件
+           if event.Type == codex.EventItemCompleted {
+               items = append(items, event.Item)
+               if msg, ok := event.Item.(*codex.AgentMessageItem); ok {
+                   finalResponse = msg.Text
+               }
+           }
+       }
+
+       if err := streamed.Wait(); err != nil {
+           return nil, err
+       }
+
+       return &Result{Text: finalResponse, ResumeToken: thread.ID()}, nil
+   }
+   ```
 
 ### 8.3 ClaudeCodeOrchestrator 迁移策略
 
