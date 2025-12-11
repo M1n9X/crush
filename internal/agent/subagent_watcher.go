@@ -13,14 +13,15 @@ import (
 // SubAgentWatcher watches for changes in subagent configuration directories
 // and automatically clears the cache when changes are detected.
 type SubAgentWatcher struct {
-	watcher *fsnotify.Watcher
-	ctx     context.Context
-	cancel  context.CancelFunc
-	done    chan struct{}
+	watcher  *fsnotify.Watcher
+	ctx      context.Context
+	cancel   context.CancelFunc
+	done     chan struct{}
+	onChange func()
 }
 
 // NewSubAgentWatcher creates a new file watcher for subagent definitions.
-func NewSubAgentWatcher(ctx context.Context, workingDir string) (*SubAgentWatcher, error) {
+func NewSubAgentWatcher(ctx context.Context, workingDir string, onChange func()) (*SubAgentWatcher, error) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
@@ -29,10 +30,11 @@ func NewSubAgentWatcher(ctx context.Context, workingDir string) (*SubAgentWatche
 	watcherCtx, cancel := context.WithCancel(ctx)
 
 	w := &SubAgentWatcher{
-		watcher: watcher,
-		ctx:     watcherCtx,
-		cancel:  cancel,
-		done:    make(chan struct{}),
+		watcher:  watcher,
+		ctx:      watcherCtx,
+		cancel:   cancel,
+		done:     make(chan struct{}),
+		onChange: onChange,
 	}
 
 	// Add directories to watch
@@ -96,6 +98,9 @@ func (w *SubAgentWatcher) watch() {
 				event.Has(fsnotify.Rename) || event.Has(fsnotify.Remove) {
 				slog.Debug("Subagent configuration changed", "file", event.Name, "op", event.Op)
 				clearSubAgentDefsCache()
+				if w.onChange != nil {
+					go w.onChange()
+				}
 			}
 
 		case err, ok := <-w.watcher.Errors:

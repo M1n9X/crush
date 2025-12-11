@@ -11,11 +11,10 @@ import (
 
 	"charm.land/fantasy"
 
-	"github.com/charmbracelet/crush/internal/agent/prompt"
 	"github.com/charmbracelet/crush/internal/agent/tools"
-	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/pubsub"
+	"github.com/charmbracelet/crush/internal/subagent"
 )
 
 //go:embed templates/subagent_tool.md
@@ -30,6 +29,10 @@ type SubAgentParams struct {
 	SubagentType string `json:"subagent_type,omitempty" description:"The subagent type to use (defined in ~/.claude/.codebreeze/.crush agents or project equivalents). Defaults to general-purpose."`
 	// Optional: Specific model name to use for this task. If not provided, uses the default task model or the subagent's configured model.
 	ModelName string `json:"model_name,omitempty" description:"Optional: Specific model name to use for this task. If not provided, uses the default task model or the subagent's configured model."`
+	// Optional: reuse an existing subagent session (claude) instead of creating a new one.
+	SessionID string `json:"session_id,omitempty" description:"Existing subagent session to continue"`
+	// Optional: resume token for adapters that require it (e.g. Codex thread id).
+	ResumeToken string `json:"resume_token,omitempty" description:"Resume token for adapters that support resuming (e.g. Codex thread id)"`
 }
 
 const (
@@ -38,16 +41,6 @@ const (
 
 // subAgentTool exposes a configurable subagent powered by user-defined profiles.
 func (c *coordinator) subAgentTool(ctx context.Context) (fantasy.AgentTool, error) {
-	agentCfg, ok := c.cfg.Agents[config.AgentCoder]
-	if !ok {
-		// Fallback to task agent if coder is missing
-		var taskOK bool
-		agentCfg, taskOK = c.cfg.Agents[config.AgentTask]
-		if !taskOK {
-			return nil, errors.New("coder or task agent not configured")
-		}
-	}
-
 	toolDescription := strings.TrimSpace(string(subAgentToolDescription))
 	if defs, err := loadSubAgentDefinitions(c.cfg.WorkingDir()); err == nil && len(defs) > 0 {
 		if formatted := formatSubAgentDefinitions(defs); formatted != "" {
@@ -64,8 +57,8 @@ func (c *coordinator) subAgentTool(ctx context.Context) (fantasy.AgentTool, erro
 				return fantasy.NewTextErrorResponse("prompt is required and cannot be empty"), nil
 			}
 
-			sessionID := tools.GetSessionFromContext(ctx)
-			if sessionID == "" {
+			parentSessionID := tools.GetSessionFromContext(ctx)
+			if parentSessionID == "" {
 				return fantasy.ToolResponse{}, errors.New("session id missing from context")
 			}
 
@@ -74,209 +67,77 @@ func (c *coordinator) subAgentTool(ctx context.Context) (fantasy.AgentTool, erro
 				return fantasy.ToolResponse{}, errors.New("agent message id missing from context")
 			}
 
-			// Load subagent definitions and pick the requested type.
-			defs, err := loadSubAgentDefinitionsWithCache(c.cfg.WorkingDir())
+			registry, err := c.subagentRegistry(ctx)
 			if err != nil {
-				// Log warning but continue with builtin definitions only
-				defs = []SubAgentDefinition{
-					{
-						Name:         "general-purpose",
-						Description:  "General-purpose subagent for quick, read-only reconnaissance and lookups.",
-						Wildcard:     true,
-						SystemPrompt: "You are a general-purpose subagent. Stay concise and use only the tools provided to complete the task.",
-						Source:       "builtin",
-					},
-				}
+				return fantasy.NewTextErrorResponse(fmt.Sprintf("failed to load subagents: %s", err)), nil
 			}
-
-			// Validate subagent_type if provided
-			if params.SubagentType != "" {
-				if err := validateSubagentType(params.SubagentType, defs); err != nil {
-					return fantasy.NewTextErrorResponse(err.Error()), nil
-				}
-			}
-
-			definition, err := selectSubAgentDefinition(defs, params.SubagentType)
+			registration, err := registry.Resolve(params.SubagentType)
 			if err != nil {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
+			profile := registration.Profile
 
 			agentToolSessionID := c.sessions.CreateAgentToolSessionID(agentMessageID, call.ID)
-			sessionTitle := fmt.Sprintf("Sub Agent: %s", definition.Name)
-			session, err := c.sessions.CreateTaskSession(ctx, agentToolSessionID, sessionID, sessionTitle)
-			if err != nil {
-				return fantasy.ToolResponse{}, fmt.Errorf("error creating session: %s", err)
-			}
-			// Subagent sessions are read-only by design; auto-approve to avoid permission prompts.
-			c.permissions.AutoApproveSession(session.ID)
-
-			// Build a derived agent config with a per-subagent tool allowlist.
-			baseTools := filterToolNames(agentCfg.AllowedTools, SubAgentToolName, AgentToolName)
-			derivedAgentCfg := agentCfg
-			if !definition.Wildcard && len(definition.Tools) > 0 {
-				derivedAgentCfg.AllowedTools = intersectTools(baseTools, definition.Tools)
-			} else {
-				derivedAgentCfg.AllowedTools = baseTools
-			}
-
-			// Determine effective model: params.ModelName > definition.ModelName > default
-			effectiveModel := ""
-			if params.ModelName != "" {
-				effectiveModel = params.ModelName
-			} else if definition.ModelName != "" {
-				effectiveModel = definition.ModelName
-			}
-
-			// If a specific model is requested, update the derived config
-			if effectiveModel != "" {
-				modelType := config.SelectedModelType(effectiveModel)
-				if _, ok := c.cfg.Models[modelType]; !ok {
-					return fantasy.NewTextErrorResponse(fmt.Sprintf("unknown model_name %q; available types: %s", effectiveModel, strings.Join(sortedModelTypes(c.cfg.Models), ", "))), nil
+			sessionTitle := fmt.Sprintf("Sub Agent: %s", profile.Name)
+			targetSessionID := strings.TrimSpace(params.SessionID)
+			if targetSessionID == "" {
+				newSession, err := c.sessions.CreateTaskSession(ctx, agentToolSessionID, parentSessionID, sessionTitle)
+				if err != nil {
+					return fantasy.ToolResponse{}, fmt.Errorf("error creating session: %s", err)
 				}
-				derivedAgentCfg.Model = modelType
+				targetSessionID = newSession.ID
+			} else {
+				if _, err := c.sessions.Get(ctx, targetSessionID); err != nil {
+					return fantasy.NewTextErrorResponse(fmt.Sprintf("unknown session_id %q", targetSessionID)), nil
+				}
 			}
 
-			// Build system prompt (agent-specific if provided, otherwise fallback template).
-			var sysPrompt *prompt.Prompt
-			if definition.SystemPrompt != "" {
-				sysPrompt, err = prompt.NewPrompt("subagent-"+definition.Name, definition.SystemPrompt, prompt.WithWorkingDir(c.cfg.WorkingDir()))
-			} else {
-				sysPrompt, err = subAgentPrompt(prompt.WithWorkingDir(c.cfg.WorkingDir()))
-			}
-			if err != nil {
-				return fantasy.NewTextErrorResponse(fmt.Sprintf("error preparing system prompt: %s", err)), nil
-			}
+			// Subagent sessions are read-only by design; auto-approve to avoid permission prompts.
+			c.permissions.AutoApproveSession(targetSessionID)
 
 			// Forward subagent logs to parent session for streaming visibility.
 			progressCtx, progressCancel := context.WithCancel(ctx)
 			defer progressCancel()
-			go c.forwardSubAgentLogs(progressCtx, session.ID, sessionID, call.ID, definition.Name)
+			go c.forwardSubAgentLogs(progressCtx, targetSessionID, parentSessionID, call.ID, profile.Name)
 
-			agent, err := c.buildAgent(ctx, sysPrompt, derivedAgentCfg)
-			if err != nil {
-				return fantasy.NewTextErrorResponse(fmt.Sprintf("error building subagent: %s", err)), nil
+			req := subagent.Request{
+				Task:    params.Prompt,
+				Sandbox: subagent.SandboxReadOnly,
+				Metadata: map[string]string{
+					"parent_session_id": parentSessionID,
+					"tool_call_id":      call.ID,
+				},
+				Profile:     &profile,
+				SessionID:   targetSessionID,
+				ParentID:    parentSessionID,
+				ModelName:   params.ModelName,
+				Description: params.Description,
 			}
 
-			// Build tools synchronously to ensure subagent has its allowlisted tools available immediately.
-			subAgentTools, err := c.buildTools(ctx, derivedAgentCfg)
-			if err != nil {
-				return fantasy.NewTextErrorResponse(fmt.Sprintf("error building subagent tools: %s", err)), nil
-			}
-			agent.SetTools(subAgentTools)
-
-			model := agent.Model()
-			maxTokens := model.CatwalkCfg.DefaultMaxTokens
-			if model.ModelCfg.MaxTokens != 0 {
-				maxTokens = model.ModelCfg.MaxTokens
-			}
-
-			providerCfg, ok := c.cfg.Providers.Get(model.ModelCfg.Provider)
-			if !ok {
-				return fantasy.ToolResponse{}, errors.New("model provider not configured")
-			}
-
-			fullPrompt := params.Prompt
-			if params.Description != "" || definition.Description != "" {
-				descParts := []string{}
-				if definition.Description != "" {
-					descParts = append(descParts, definition.Description)
-				}
-				if params.Description != "" {
-					descParts = append(descParts, params.Description)
-				}
-				fullPrompt = fmt.Sprintf("%s\n\nTask: %s", strings.Join(descParts, "\n"), params.Prompt)
-			}
-
-			result, err := agent.Run(ctx, SessionAgentCall{
-				SessionID:        session.ID,
-				Prompt:           fullPrompt,
-				MaxOutputTokens:  maxTokens,
-				ProviderOptions:  getProviderOptions(model, providerCfg),
-				Temperature:      model.ModelCfg.Temperature,
-				TopP:             model.ModelCfg.TopP,
-				TopK:             model.ModelCfg.TopK,
-				FrequencyPenalty: model.ModelCfg.FrequencyPenalty,
-				PresencePenalty:  model.ModelCfg.PresencePenalty,
-			})
-			if err != nil {
-				return fantasy.NewTextErrorResponse("error generating response"), nil
+			var result *subagent.Result
+			if params.ResumeToken != "" && registration.Agent.SupportsResume() {
+				result, err = registration.Agent.Resume(ctx, params.ResumeToken, req)
+			} else {
+				result, err = registration.Agent.Execute(ctx, req)
 			}
 
 			// Stop forwarding logs
 			progressCancel()
 
-			updatedSession, err := c.sessions.Get(ctx, session.ID)
 			if err != nil {
-				return fantasy.ToolResponse{}, fmt.Errorf("error getting session: %s", err)
+				return fantasy.NewTextErrorResponse(fmt.Sprintf("error running subagent %s: %v", profile.Name, err)), nil
 			}
-			parentSession, err := c.sessions.Get(ctx, sessionID)
-			if err != nil {
-				return fantasy.ToolResponse{}, fmt.Errorf("error getting parent session: %s", err)
+			if result == nil {
+				return fantasy.NewTextErrorResponse("subagent returned no result"), nil
 			}
 
-			parentSession.Cost += updatedSession.Cost
-
-			if _, err = c.sessions.Save(ctx, parentSession); err != nil {
+			if err := c.reconcileSubagentCost(ctx, targetSessionID, parentSessionID, result); err != nil {
 				return fantasy.ToolResponse{}, fmt.Errorf("error saving parent session: %s", err)
 			}
 
-			return fantasy.NewTextResponse(result.Response.Content.Text()), nil
+			return fantasy.NewTextResponse(result.Text), nil
 		},
 	), nil
-}
-
-func selectSubAgentDefinition(defs []SubAgentDefinition, requested string) (SubAgentDefinition, error) {
-	name := strings.TrimSpace(requested)
-	if name == "" {
-		name = "general-purpose"
-	}
-	for _, d := range defs {
-		if d.Name == name {
-			return d, nil
-		}
-	}
-	var names []string
-	for _, d := range defs {
-		names = append(names, d.Name)
-	}
-	return SubAgentDefinition{}, fmt.Errorf("unknown subagent_type %q; available: %s", name, strings.Join(names, ", "))
-}
-
-func intersectTools(base, mask []string) []string {
-	if len(mask) == 0 {
-		return base
-	}
-	allowed := map[string]struct{}{}
-	for _, m := range mask {
-		allowed[m] = struct{}{}
-	}
-	var out []string
-	for _, b := range base {
-		if _, ok := allowed[b]; ok {
-			out = append(out, b)
-		}
-	}
-	return out
-}
-
-// validateSubagentType checks if the requested subagent type is available.
-func validateSubagentType(requested string, defs []SubAgentDefinition) error {
-	name := strings.TrimSpace(requested)
-	if name == "" {
-		return nil // Empty is allowed, will use default
-	}
-
-	for _, d := range defs {
-		if d.Name == name {
-			return nil
-		}
-	}
-
-	var names []string
-	for _, d := range defs {
-		names = append(names, d.Name)
-	}
-	return fmt.Errorf("unknown subagent_type %q; available: %s", name, strings.Join(names, ", "))
 }
 
 func filterToolNames(base []string, blocked ...string) []string {
@@ -293,16 +154,27 @@ func filterToolNames(base []string, blocked ...string) []string {
 	return filtered
 }
 
-func sortedModelTypes(models map[config.SelectedModelType]config.SelectedModel) []string {
-	if len(models) == 0 {
-		return []string{}
+func (c *coordinator) reconcileSubagentCost(ctx context.Context, subSessionID, parentSessionID string, result *subagent.Result) error {
+	if subSessionID == "" || parentSessionID == "" {
+		return nil
 	}
-	keys := make([]string, 0, len(models))
-	for k := range models {
-		keys = append(keys, string(k))
+
+	subSession, err := c.sessions.Get(ctx, subSessionID)
+	if err != nil {
+		return err
 	}
-	slices.Sort(keys)
-	return keys
+	parentSession, err := c.sessions.Get(ctx, parentSessionID)
+	if err != nil {
+		return err
+	}
+
+	parentSession.Cost += subSession.Cost
+	if result != nil && result.Usage.CostUSD > 0 {
+		parentSession.Cost += result.Usage.CostUSD
+	}
+
+	_, err = c.sessions.Save(ctx, parentSession)
+	return err
 }
 
 func (c *coordinator) forwardSubAgentLogs(ctx context.Context, subSessionID, parentSessionID, toolCallID, subagentName string) {

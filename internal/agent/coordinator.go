@@ -13,6 +13,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 
 	"charm.land/fantasy"
 	"github.com/charmbracelet/catwalk/pkg/catwalk"
@@ -29,6 +30,7 @@ import (
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/session"
+	"github.com/charmbracelet/crush/internal/subagent"
 	"github.com/charmbracelet/crush/internal/telemetry"
 	"golang.org/x/sync/errgroup"
 
@@ -72,6 +74,8 @@ type coordinator struct {
 	capabilities *capability.Registry
 
 	agentWatcher *SubAgentWatcher
+	subagents    *subagent.Registry
+	subagentsMu  sync.Mutex
 
 	currentAgent SessionAgent
 	agents       map[string]SessionAgent
@@ -110,7 +114,7 @@ func NewCoordinator(
 	}
 
 	// Initialize subagent watcher for hot reload
-	watcher, err := NewSubAgentWatcher(ctx, c.cfg.WorkingDir())
+	watcher, err := NewSubAgentWatcher(ctx, c.cfg.WorkingDir(), c.clearSubagentRegistry)
 	if err != nil {
 		slog.Warn("Failed to start subagent watcher, hot reload disabled", "error", err)
 		// Non-fatal error, continue without watcher
@@ -165,6 +169,55 @@ func (c *coordinator) memoryLoader(agentID string) func() ([]prompt.ContextFile,
 		}
 		return files, nil
 	}
+}
+
+func (c *coordinator) clearSubagentRegistry() {
+	c.subagentsMu.Lock()
+	c.subagents = nil
+	c.subagentsMu.Unlock()
+}
+
+func (c *coordinator) subagentRegistry(_ context.Context) (*subagent.Registry, error) {
+	c.subagentsMu.Lock()
+	defer c.subagentsMu.Unlock()
+
+	if c.subagents != nil {
+		return c.subagents, nil
+	}
+
+	defs, err := loadSubAgentDefinitionsWithCache(c.cfg.WorkingDir())
+	if err != nil || len(defs) == 0 {
+		// Fall back to builtins if loading fails.
+		defs = make([]SubAgentDefinition, 0, len(builtinSubAgentDefinitions()))
+		for _, def := range builtinSubAgentDefinitions() {
+			defs = append(defs, def)
+		}
+	}
+	profiles := definitionsToProfiles(defs)
+
+	claude := newClaudeCodeSubagent(c)
+	codexAgent := subagent.NewCodexSubagent(subagent.CodexOptions{
+		WorkingDirectory: c.cfg.WorkingDir(),
+		DefaultSandbox:   subagent.SandboxReadOnly,
+	})
+
+	registry := subagent.NewRegistry(claude)
+	for _, profile := range profiles {
+		if !isSubagentMode(profile) {
+			continue
+		}
+		var agent subagent.Subagent = claude
+		if prefersCodex(profile) {
+			agent = codexAgent
+		}
+		registry.Upsert(subagent.Registration{
+			Profile: profile,
+			Agent:   agent,
+		})
+	}
+
+	c.subagents = registry
+	return registry, nil
 }
 
 // Run implements Coordinator.

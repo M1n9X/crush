@@ -9,6 +9,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.0-beta.3.0.20251119143523-0334bb4562ca
 	charm.land/x/vcr v0.1.1
 	github.com/JohannesKaufmann/html-to-markdown v1.6.0
+	github.com/M1n9X/codex-sdk-go v0.0.0-20251211161447-966ec1a298f9
 	github.com/M1n9X/claude-agent-sdk-go v0.0.0-20251115144806-282e191bc3ab
 	github.com/MakeNowJust/heredoc v1.0.0
 	github.com/PuerkitoBio/goquery v1.10.3
@@ -178,3 +179,5 @@ require (
 	gopkg.in/dnaeon/go-vcr.v4 v4.0.6-0.20251110073552-01de4eb40290 // indirect
 	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
 )
+
+replace github.com/M1n9X/codex-sdk-go => ../CODEX-SDK-GO/codex-sdk-go
