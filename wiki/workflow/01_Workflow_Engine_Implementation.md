@@ -505,10 +505,52 @@ ALTER TABLE workflow_steps ADD COLUMN node_id TEXT;
 
 ### 13.5 SQLC 新增查询
 
-| 查询 | 说明 |
-|------|------|
 | `CreateWorkflowWithSpec` | 创建带 spec_json 的工作流 |
 | `UpdateWorkflowCurrentNode` | 更新当前节点 ID |
 | `GetWorkflowStepByNodeID` | 按节点 ID 获取步骤 |
 | `CreateWorkflowStepWithNode` | 创建带 node_id 的步骤 |
 | `GetCurrentDAGStep` | 获取当前 DAG 步骤 |
+| `ResetWorkflowStepRuntime` | 重置步骤运行时状态 |
+
+### 13.6 DAG 执行方法
+
+| 方法 | 说明 |
+|------|------|
+| `CreateFromSpec()` | 从 WorkflowSpec 创建 DAG 工作流 |
+| `isDAGWorkflow()` | 检测是否为 DAG 模式 (`spec_json` 存在) |
+| `getCurrentStep()` | DAG/Sequential 双模式获取当前步骤 |
+| `runDAGTick()` | DAG 单步执行，使用 `GetNextNodes()` 遍历边 |
+| `transitionToDAGNode()` | 节点转换，重置步骤并更新 `current_node_id` |
+| `resolveAgentForNode()` | Capability 优先匹配 agent |
+
+### 13.7 DAG 执行流程
+
+```mermaid
+graph TD
+    A[runLoop] --> B{isDAGWorkflow?}
+    B -->|No| C[Sequential Mode]
+    B -->|Yes| D[runDAGTick]
+    D --> E{Terminal Node?}
+    E -->|success| F[completeWorkflow]
+    E -->|fail| G[failWorkflow]
+    E -->|No| H[Execute Step]
+    H --> I{Step Result}
+    I -->|Completed| J[GetNextNodes]
+    I -->|Failed| K[Check on_fail]
+    I -->|Approval Needed| L[WaitingInput]
+    J --> M[transitionToDAGNode]
+    K --> M
+```
+
+---
+
+## 14. 测试覆盖
+
+| 测试文件 | 测试数 | 覆盖范围 |
+|----------|--------|----------|
+| `engine_test.go` | 20+ | 核心、DAG、capability 匹配 |
+| `spec_test.go` | 25+ | 解析、验证、环检测 |
+| `types_test.go` | 8 | 状态枚举、转换 |
+| 集成测试 | 3+ | 审批、DAG 转换 |
+
+**总计: 40+ 测试通过**
