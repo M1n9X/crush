@@ -17,6 +17,9 @@ type Querier interface {
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	CreateWorkflow(ctx context.Context, arg CreateWorkflowParams) (Workflow, error)
 	CreateWorkflowStep(ctx context.Context, arg CreateWorkflowStepParams) (WorkflowStep, error)
+	CreateWorkflowStepWithNode(ctx context.Context, arg CreateWorkflowStepWithNodeParams) (WorkflowStep, error)
+	// DAG-specific queries
+	CreateWorkflowWithSpec(ctx context.Context, arg CreateWorkflowWithSpecParams) (Workflow, error)
 	DeleteFile(ctx context.Context, id string) error
 	DeleteMessage(ctx context.Context, id string) error
 	DeleteSession(ctx context.Context, id string) error
@@ -25,6 +28,7 @@ type Querier interface {
 	DeleteWorkflow(ctx context.Context, id string) error
 	DeleteWorkflowSteps(ctx context.Context, workflowID string) error
 	FailWorkflowStep(ctx context.Context, arg FailWorkflowStepParams) (WorkflowStep, error)
+	GetCurrentDAGStep(ctx context.Context, id string) (WorkflowStep, error)
 	GetCurrentWorkflowStep(ctx context.Context, id string) (WorkflowStep, error)
 	GetFile(ctx context.Context, id string) (File, error)
 	GetFileByPathAndSession(ctx context.Context, arg GetFileByPathAndSessionParams) (File, error)
@@ -32,6 +36,7 @@ type Querier interface {
 	GetSessionByID(ctx context.Context, id string) (Session, error)
 	GetWorkflowByID(ctx context.Context, id string) (Workflow, error)
 	GetWorkflowStepByID(ctx context.Context, id string) (WorkflowStep, error)
+	GetWorkflowStepByNodeID(ctx context.Context, arg GetWorkflowStepByNodeIDParams) (WorkflowStep, error)
 	IncrementStepRetry(ctx context.Context, id string) (WorkflowStep, error)
 	ListFilesByPath(ctx context.Context, path string) ([]File, error)
 	ListFilesBySession(ctx context.Context, sessionID string) ([]File, error)
@@ -47,6 +52,7 @@ type Querier interface {
 	StartWorkflowStep(ctx context.Context, id string) (WorkflowStep, error)
 	UpdateMessage(ctx context.Context, arg UpdateMessageParams) error
 	UpdateSession(ctx context.Context, arg UpdateSessionParams) (Session, error)
+	UpdateWorkflowCurrentNode(ctx context.Context, arg UpdateWorkflowCurrentNodeParams) (Workflow, error)
 	UpdateWorkflowState(ctx context.Context, arg UpdateWorkflowStateParams) (Workflow, error)
 	UpdateWorkflowStep(ctx context.Context, arg UpdateWorkflowStepParams) (Workflow, error)
 	UpdateWorkflowStepStatus(ctx context.Context, arg UpdateWorkflowStepStatusParams) (WorkflowStep, error)

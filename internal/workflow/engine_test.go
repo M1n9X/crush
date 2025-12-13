@@ -145,6 +145,8 @@ func TestWorkflowFromDB(t *testing.T) {
 		State:            "running",
 		PlanJson:         sql.NullString{String: `{"plan":"test"}`, Valid: true},
 		ConfigJson:       sql.NullString{String: `{"title":"test"}`, Valid: true},
+		SpecJson:         sql.NullString{String: `{"name":"spec","nodes":[]}`, Valid: true},
+		CurrentNodeID:    sql.NullString{String: "plan", Valid: true},
 		CurrentStepIndex: 2,
 		ErrorMessage:     sql.NullString{String: "some error", Valid: true},
 		CreatedAt:        1700000000,
@@ -160,6 +162,8 @@ func TestWorkflowFromDB(t *testing.T) {
 	require.Equal(t, WorkflowStateRunning, wf.State)
 	require.Equal(t, `{"plan":"test"}`, wf.PlanJSON)
 	require.Equal(t, `{"title":"test"}`, wf.ConfigJSON)
+	require.Equal(t, `{"name":"spec","nodes":[]}`, wf.SpecJSON)
+	require.Equal(t, "plan", wf.CurrentNodeID)
 	require.Equal(t, 2, wf.CurrentStepIndex)
 	require.Equal(t, "some error", wf.ErrorMessage)
 	require.NotNil(t, wf.CompletedAt)
@@ -208,6 +212,7 @@ func TestStepFromDB(t *testing.T) {
 		RequiresApproval: 1,
 		ApprovalStatus:   sql.NullString{String: "approved", Valid: true},
 		ErrorMessage:     sql.NullString{String: "some step error", Valid: true},
+		NodeID:           sql.NullString{String: "coding", Valid: true},
 		CreatedAt:        1700000000,
 		UpdatedAt:        1700000100,
 		StartedAt:        sql.NullInt64{Int64: 1700000050, Valid: true},
@@ -232,6 +237,7 @@ func TestStepFromDB(t *testing.T) {
 	require.True(t, step.RequiresApproval)
 	require.Equal(t, ApprovalApproved, step.ApprovalStatus)
 	require.Equal(t, "some step error", step.ErrorMessage)
+	require.Equal(t, "coding", step.NodeID)
 	require.NotNil(t, step.StartedAt)
 	require.NotNil(t, step.CompletedAt)
 }
@@ -286,4 +292,99 @@ func TestErrConstants(t *testing.T) {
 	require.Contains(t, ErrInvalidState.Error(), "invalid")
 	require.Contains(t, ErrApprovalRequired.Error(), "approval")
 	require.Contains(t, ErrNoSubagentAvailable.Error(), "subagent")
+}
+
+func TestHasCapabilities(t *testing.T) {
+	agent := &fakeSubagent{
+		name:         "test-agent",
+		capabilities: []subagent.Capability{"plan", "code", "review"},
+	}
+	reg := subagent.Registration{
+		Profile: subagent.Profile{Name: "test"},
+		Agent:   agent,
+	}
+
+	t.Run("has all capabilities", func(t *testing.T) {
+		require.True(t, hasCapabilities(reg, []string{"plan", "code"}))
+	})
+
+	t.Run("missing capability", func(t *testing.T) {
+		require.False(t, hasCapabilities(reg, []string{"plan", "docs"}))
+	})
+
+	t.Run("empty required", func(t *testing.T) {
+		require.True(t, hasCapabilities(reg, []string{}))
+	})
+}
+
+func TestGetStepTypeFromCapabilities(t *testing.T) {
+	require.Equal(t, string(StepTypePlan), getStepTypeFromCapabilities([]string{"plan"}))
+	require.Equal(t, string(StepTypeCode), getStepTypeFromCapabilities([]string{"code"}))
+	require.Equal(t, string(StepTypeReview), getStepTypeFromCapabilities([]string{"review"}))
+	require.Equal(t, string(StepTypeDocs), getStepTypeFromCapabilities([]string{"docs"}))
+	require.Equal(t, "brainstorm", getStepTypeFromCapabilities([]string{"brainstorm"}))
+	require.Equal(t, string(StepTypeCode), getStepTypeFromCapabilities([]string{}))
+}
+
+func TestResolveAgentForNode(t *testing.T) {
+	engine := NewEngine(nil, nil)
+
+	t.Run("no registry uses preferred agent", func(t *testing.T) {
+		node := &NodeSpec{
+			ID:              "test",
+			Capabilities:    []string{"plan"},
+			PreferredAgents: []string{"claude-code"},
+		}
+		agent, err := engine.resolveAgentForNode(node)
+		require.NoError(t, err)
+		require.Equal(t, "claude-code", agent)
+	})
+
+	t.Run("no registry no preferred returns error", func(t *testing.T) {
+		node := &NodeSpec{
+			ID:           "test",
+			Capabilities: []string{"plan"},
+		}
+		_, err := engine.resolveAgentForNode(node)
+		require.Error(t, err)
+	})
+}
+
+func TestResolveAgentWithRegistry(t *testing.T) {
+	// Create agent with capabilities
+	agent := &fakeSubagent{
+		name:         "codex",
+		capabilities: []subagent.Capability{"plan", "review"},
+		result:       &subagent.Result{Text: "done"},
+	}
+
+	registry := subagent.NewRegistry(nil)
+	registry.Upsert(subagent.Registration{
+		Profile: subagent.Profile{Name: "codex"},
+		Agent:   agent,
+	})
+
+	engine := NewEngine(nil, registry)
+
+	t.Run("preferred agent with matching capabilities", func(t *testing.T) {
+		node := &NodeSpec{
+			ID:              "test",
+			Capabilities:    []string{"review"},
+			PreferredAgents: []string{"codex"},
+		}
+		agentName, err := engine.resolveAgentForNode(node)
+		require.NoError(t, err)
+		require.Equal(t, "codex", agentName)
+	})
+
+	t.Run("fallback to preferred when no capability match", func(t *testing.T) {
+		node := &NodeSpec{
+			ID:              "test",
+			Capabilities:    []string{"docs"}, // codex doesn't have docs
+			PreferredAgents: []string{"codex"},
+		}
+		agentName, err := engine.resolveAgentForNode(node)
+		require.NoError(t, err)
+		require.Equal(t, "codex", agentName) // Falls back to first preferred
+	})
 }

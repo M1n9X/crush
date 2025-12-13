@@ -156,3 +156,86 @@ RETURNING *;
 
 -- name: DeleteWorkflowSteps :exec
 DELETE FROM workflow_steps WHERE workflow_id = ?;
+
+-- DAG-specific queries
+
+-- name: CreateWorkflowWithSpec :one
+INSERT INTO workflows (
+    id,
+    parent_session_id,
+    title,
+    state,
+    plan_json,
+    config_json,
+    spec_json,
+    current_step_index,
+    current_node_id,
+    error_message
+) VALUES (
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?
+) RETURNING *;
+
+-- name: UpdateWorkflowCurrentNode :one
+UPDATE workflows SET
+    current_node_id = ?
+WHERE id = ?
+RETURNING *;
+
+-- name: GetWorkflowStepByNodeID :one
+SELECT * FROM workflow_steps 
+WHERE workflow_id = ? AND node_id = ?
+LIMIT 1;
+
+-- name: CreateWorkflowStepWithNode :one
+INSERT INTO workflow_steps (
+    id,
+    workflow_id,
+    step_index,
+    step_type,
+    agent,
+    agent_session_id,
+    status,
+    title,
+    input_context_json,
+    output_json,
+    review_result_json,
+    retry_count,
+    max_retries,
+    requires_approval,
+    approval_status,
+    error_message,
+    node_id
+) VALUES (
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?
+) RETURNING *;
+
+-- name: GetCurrentDAGStep :one
+SELECT ws.* FROM workflow_steps ws
+JOIN workflows w ON ws.workflow_id = w.id
+WHERE w.id = ? AND ws.node_id = w.current_node_id
+LIMIT 1;

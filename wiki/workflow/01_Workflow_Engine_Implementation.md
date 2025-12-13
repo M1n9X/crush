@@ -442,3 +442,73 @@ go test -v ./internal/workflow/...
 | TUI 面板 | 未实现 | 工作流进度、审批、日志 |
 
 参见: [`wiki/spec/workflow_spec.md`](file:///Users/mxue/GitRepos/Coding/crush/wiki/spec/workflow_spec.md) - DAG 规范定义
+
+---
+
+## 13. DAG Workflow 支持 (v2)
+
+### 13.1 新增文件
+
+| 文件 | 说明 |
+|------|------|
+| [spec.go](file:///Users/mxue/GitRepos/Coding/crush/internal/workflow/spec.go) | WorkflowSpec/NodeSpec 类型、YAML/JSON 解析、验证 |
+| [spec_test.go](file:///Users/mxue/GitRepos/Coding/crush/internal/workflow/spec_test.go) | Spec 单元测试 (20+ 用例) |
+| [20251213100000_add_dag_support.sql](file:///Users/mxue/GitRepos/Coding/crush/internal/db/migrations/20251213100000_add_dag_support.sql) | DAG 列迁移 |
+
+### 13.2 WorkflowSpec 结构
+
+```go
+type WorkflowSpec struct {
+    Version     int                    `yaml:"version"`
+    Name        string                 `yaml:"name"`
+    Description string                 `yaml:"description"`
+    Vars        map[string]interface{} `yaml:"vars"`
+    Nodes       []NodeSpec             `yaml:"nodes"`
+}
+
+type NodeSpec struct {
+    ID               string   `yaml:"id"`
+    Name             string   `yaml:"name"`
+    Capabilities     []string `yaml:"capabilities"`
+    PreferredAgents  []string `yaml:"preferred_agents"`
+    RequiresApproval bool     `yaml:"requires_approval"`
+    Terminal         string   `yaml:"terminal"` // "success" | "fail"
+    
+    // 转换边
+    Next      []string   `yaml:"next"`
+    OnApprove []string   `yaml:"on_approve"`
+    OnReject  []string   `yaml:"on_reject"`
+    OnFail    []string   `yaml:"on_fail"`
+    OnError   *ErrorSpec `yaml:"on_error"`
+}
+```
+
+### 13.3 环检测策略
+
+| 边类型 | 检测环 | 说明 |
+|--------|--------|------|
+| `next` | ✅ | 正常前进边 |
+| `on_approve` | ✅ | 审批通过边 |
+| `on_reject` | ❌ | 恢复边，允许回退 |
+| `on_fail` | ❌ | 失败恢复边 |
+| `on_error` | ❌ | 错误恢复边 |
+
+**原因**: `on_reject`/`on_fail`/`on_error` 是工作流恢复机制的一部分，需要用户操作或失败才会触发，不构成自动执行的环路。
+
+### 13.4 数据库新增列
+
+```sql
+ALTER TABLE workflows ADD COLUMN spec_json TEXT;
+ALTER TABLE workflows ADD COLUMN current_node_id TEXT;
+ALTER TABLE workflow_steps ADD COLUMN node_id TEXT;
+```
+
+### 13.5 SQLC 新增查询
+
+| 查询 | 说明 |
+|------|------|
+| `CreateWorkflowWithSpec` | 创建带 spec_json 的工作流 |
+| `UpdateWorkflowCurrentNode` | 更新当前节点 ID |
+| `GetWorkflowStepByNodeID` | 按节点 ID 获取步骤 |
+| `CreateWorkflowStepWithNode` | 创建带 node_id 的步骤 |
+| `GetCurrentDAGStep` | 获取当前 DAG 步骤 |

@@ -61,6 +61,8 @@ type Workflow struct {
 	State            WorkflowState
 	PlanJSON         string
 	ConfigJSON       string
+	SpecJSON         string
+	CurrentNodeID    string
 	CurrentStepIndex int
 	ErrorMessage     string
 	CreatedAt        time.Time
@@ -87,6 +89,7 @@ type Step struct {
 	RequiresApproval bool
 	ApprovalStatus   ApprovalStatus
 	ErrorMessage     string
+	NodeID           string
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 	StartedAt        *time.Time
@@ -145,6 +148,12 @@ func WorkflowFromDB(w db.Workflow) Workflow {
 	if w.ConfigJson.Valid {
 		wf.ConfigJSON = w.ConfigJson.String
 	}
+	if w.SpecJson.Valid {
+		wf.SpecJSON = w.SpecJson.String
+	}
+	if w.CurrentNodeID.Valid {
+		wf.CurrentNodeID = w.CurrentNodeID.String
+	}
 	if w.ErrorMessage.Valid {
 		wf.ErrorMessage = w.ErrorMessage.String
 	}
@@ -190,6 +199,9 @@ func StepFromDB(s db.WorkflowStep) Step {
 	}
 	if s.ErrorMessage.Valid {
 		step.ErrorMessage = s.ErrorMessage.String
+	}
+	if s.NodeID.Valid {
+		step.NodeID = s.NodeID.String
 	}
 	if s.StartedAt.Valid {
 		t := time.Unix(s.StartedAt.Int64, 0)

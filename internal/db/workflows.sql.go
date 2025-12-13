@@ -15,7 +15,7 @@ UPDATE workflows SET
     state = ?,
     completed_at = strftime('%s','now')
 WHERE id = ?
-RETURNING id, parent_session_id, title, state, plan_json, config_json, current_step_index, error_message, created_at, updated_at, completed_at
+RETURNING id, parent_session_id, title, state, plan_json, config_json, current_step_index, error_message, created_at, updated_at, completed_at, spec_json, current_node_id
 `
 
 type CompleteWorkflowParams struct {
@@ -38,6 +38,8 @@ func (q *Queries) CompleteWorkflow(ctx context.Context, arg CompleteWorkflowPara
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CompletedAt,
+		&i.SpecJson,
+		&i.CurrentNodeID,
 	)
 	return i, err
 }
@@ -48,7 +50,7 @@ UPDATE workflow_steps SET
     output_json = ?,
     completed_at = strftime('%s','now')
 WHERE id = ?
-RETURNING id, workflow_id, step_index, step_type, agent, agent_session_id, status, title, input_context_json, output_json, review_result_json, retry_count, max_retries, requires_approval, approval_status, error_message, created_at, updated_at, started_at, completed_at
+RETURNING id, workflow_id, step_index, step_type, agent, agent_session_id, status, title, input_context_json, output_json, review_result_json, retry_count, max_retries, requires_approval, approval_status, error_message, created_at, updated_at, started_at, completed_at, node_id
 `
 
 type CompleteWorkflowStepParams struct {
@@ -80,6 +82,7 @@ func (q *Queries) CompleteWorkflowStep(ctx context.Context, arg CompleteWorkflow
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.NodeID,
 	)
 	return i, err
 }
@@ -103,7 +106,7 @@ INSERT INTO workflows (
     ?,
     ?,
     ?
-) RETURNING id, parent_session_id, title, state, plan_json, config_json, current_step_index, error_message, created_at, updated_at, completed_at
+) RETURNING id, parent_session_id, title, state, plan_json, config_json, current_step_index, error_message, created_at, updated_at, completed_at, spec_json, current_node_id
 `
 
 type CreateWorkflowParams struct {
@@ -141,6 +144,8 @@ func (q *Queries) CreateWorkflow(ctx context.Context, arg CreateWorkflowParams) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CompletedAt,
+		&i.SpecJson,
+		&i.CurrentNodeID,
 	)
 	return i, err
 }
@@ -180,7 +185,7 @@ INSERT INTO workflow_steps (
     ?,
     ?,
     ?
-) RETURNING id, workflow_id, step_index, step_type, agent, agent_session_id, status, title, input_context_json, output_json, review_result_json, retry_count, max_retries, requires_approval, approval_status, error_message, created_at, updated_at, started_at, completed_at
+) RETURNING id, workflow_id, step_index, step_type, agent, agent_session_id, status, title, input_context_json, output_json, review_result_json, retry_count, max_retries, requires_approval, approval_status, error_message, created_at, updated_at, started_at, completed_at, node_id
 `
 
 type CreateWorkflowStepParams struct {
@@ -243,6 +248,187 @@ func (q *Queries) CreateWorkflowStep(ctx context.Context, arg CreateWorkflowStep
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.NodeID,
+	)
+	return i, err
+}
+
+const createWorkflowStepWithNode = `-- name: CreateWorkflowStepWithNode :one
+INSERT INTO workflow_steps (
+    id,
+    workflow_id,
+    step_index,
+    step_type,
+    agent,
+    agent_session_id,
+    status,
+    title,
+    input_context_json,
+    output_json,
+    review_result_json,
+    retry_count,
+    max_retries,
+    requires_approval,
+    approval_status,
+    error_message,
+    node_id
+) VALUES (
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?
+) RETURNING id, workflow_id, step_index, step_type, agent, agent_session_id, status, title, input_context_json, output_json, review_result_json, retry_count, max_retries, requires_approval, approval_status, error_message, created_at, updated_at, started_at, completed_at, node_id
+`
+
+type CreateWorkflowStepWithNodeParams struct {
+	ID               string         `json:"id"`
+	WorkflowID       string         `json:"workflow_id"`
+	StepIndex        int64          `json:"step_index"`
+	StepType         string         `json:"step_type"`
+	Agent            string         `json:"agent"`
+	AgentSessionID   sql.NullString `json:"agent_session_id"`
+	Status           string         `json:"status"`
+	Title            sql.NullString `json:"title"`
+	InputContextJson sql.NullString `json:"input_context_json"`
+	OutputJson       sql.NullString `json:"output_json"`
+	ReviewResultJson sql.NullString `json:"review_result_json"`
+	RetryCount       int64          `json:"retry_count"`
+	MaxRetries       int64          `json:"max_retries"`
+	RequiresApproval int64          `json:"requires_approval"`
+	ApprovalStatus   sql.NullString `json:"approval_status"`
+	ErrorMessage     sql.NullString `json:"error_message"`
+	NodeID           sql.NullString `json:"node_id"`
+}
+
+func (q *Queries) CreateWorkflowStepWithNode(ctx context.Context, arg CreateWorkflowStepWithNodeParams) (WorkflowStep, error) {
+	row := q.queryRow(ctx, q.createWorkflowStepWithNodeStmt, createWorkflowStepWithNode,
+		arg.ID,
+		arg.WorkflowID,
+		arg.StepIndex,
+		arg.StepType,
+		arg.Agent,
+		arg.AgentSessionID,
+		arg.Status,
+		arg.Title,
+		arg.InputContextJson,
+		arg.OutputJson,
+		arg.ReviewResultJson,
+		arg.RetryCount,
+		arg.MaxRetries,
+		arg.RequiresApproval,
+		arg.ApprovalStatus,
+		arg.ErrorMessage,
+		arg.NodeID,
+	)
+	var i WorkflowStep
+	err := row.Scan(
+		&i.ID,
+		&i.WorkflowID,
+		&i.StepIndex,
+		&i.StepType,
+		&i.Agent,
+		&i.AgentSessionID,
+		&i.Status,
+		&i.Title,
+		&i.InputContextJson,
+		&i.OutputJson,
+		&i.ReviewResultJson,
+		&i.RetryCount,
+		&i.MaxRetries,
+		&i.RequiresApproval,
+		&i.ApprovalStatus,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.NodeID,
+	)
+	return i, err
+}
+
+const createWorkflowWithSpec = `-- name: CreateWorkflowWithSpec :one
+
+INSERT INTO workflows (
+    id,
+    parent_session_id,
+    title,
+    state,
+    plan_json,
+    config_json,
+    spec_json,
+    current_step_index,
+    current_node_id,
+    error_message
+) VALUES (
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
+    ?
+) RETURNING id, parent_session_id, title, state, plan_json, config_json, current_step_index, error_message, created_at, updated_at, completed_at, spec_json, current_node_id
+`
+
+type CreateWorkflowWithSpecParams struct {
+	ID               string         `json:"id"`
+	ParentSessionID  sql.NullString `json:"parent_session_id"`
+	Title            string         `json:"title"`
+	State            string         `json:"state"`
+	PlanJson         sql.NullString `json:"plan_json"`
+	ConfigJson       sql.NullString `json:"config_json"`
+	SpecJson         sql.NullString `json:"spec_json"`
+	CurrentStepIndex int64          `json:"current_step_index"`
+	CurrentNodeID    sql.NullString `json:"current_node_id"`
+	ErrorMessage     sql.NullString `json:"error_message"`
+}
+
+// DAG-specific queries
+func (q *Queries) CreateWorkflowWithSpec(ctx context.Context, arg CreateWorkflowWithSpecParams) (Workflow, error) {
+	row := q.queryRow(ctx, q.createWorkflowWithSpecStmt, createWorkflowWithSpec,
+		arg.ID,
+		arg.ParentSessionID,
+		arg.Title,
+		arg.State,
+		arg.PlanJson,
+		arg.ConfigJson,
+		arg.SpecJson,
+		arg.CurrentStepIndex,
+		arg.CurrentNodeID,
+		arg.ErrorMessage,
+	)
+	var i Workflow
+	err := row.Scan(
+		&i.ID,
+		&i.ParentSessionID,
+		&i.Title,
+		&i.State,
+		&i.PlanJson,
+		&i.ConfigJson,
+		&i.CurrentStepIndex,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+		&i.SpecJson,
+		&i.CurrentNodeID,
 	)
 	return i, err
 }
@@ -271,7 +457,7 @@ UPDATE workflow_steps SET
     error_message = ?,
     completed_at = strftime('%s','now')
 WHERE id = ?
-RETURNING id, workflow_id, step_index, step_type, agent, agent_session_id, status, title, input_context_json, output_json, review_result_json, retry_count, max_retries, requires_approval, approval_status, error_message, created_at, updated_at, started_at, completed_at
+RETURNING id, workflow_id, step_index, step_type, agent, agent_session_id, status, title, input_context_json, output_json, review_result_json, retry_count, max_retries, requires_approval, approval_status, error_message, created_at, updated_at, started_at, completed_at, node_id
 `
 
 type FailWorkflowStepParams struct {
@@ -303,12 +489,49 @@ func (q *Queries) FailWorkflowStep(ctx context.Context, arg FailWorkflowStepPara
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.NodeID,
+	)
+	return i, err
+}
+
+const getCurrentDAGStep = `-- name: GetCurrentDAGStep :one
+SELECT ws.id, ws.workflow_id, ws.step_index, ws.step_type, ws.agent, ws.agent_session_id, ws.status, ws.title, ws.input_context_json, ws.output_json, ws.review_result_json, ws.retry_count, ws.max_retries, ws.requires_approval, ws.approval_status, ws.error_message, ws.created_at, ws.updated_at, ws.started_at, ws.completed_at, ws.node_id FROM workflow_steps ws
+JOIN workflows w ON ws.workflow_id = w.id
+WHERE w.id = ? AND ws.node_id = w.current_node_id
+LIMIT 1
+`
+
+func (q *Queries) GetCurrentDAGStep(ctx context.Context, id string) (WorkflowStep, error) {
+	row := q.queryRow(ctx, q.getCurrentDAGStepStmt, getCurrentDAGStep, id)
+	var i WorkflowStep
+	err := row.Scan(
+		&i.ID,
+		&i.WorkflowID,
+		&i.StepIndex,
+		&i.StepType,
+		&i.Agent,
+		&i.AgentSessionID,
+		&i.Status,
+		&i.Title,
+		&i.InputContextJson,
+		&i.OutputJson,
+		&i.ReviewResultJson,
+		&i.RetryCount,
+		&i.MaxRetries,
+		&i.RequiresApproval,
+		&i.ApprovalStatus,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.NodeID,
 	)
 	return i, err
 }
 
 const getCurrentWorkflowStep = `-- name: GetCurrentWorkflowStep :one
-SELECT ws.id, ws.workflow_id, ws.step_index, ws.step_type, ws.agent, ws.agent_session_id, ws.status, ws.title, ws.input_context_json, ws.output_json, ws.review_result_json, ws.retry_count, ws.max_retries, ws.requires_approval, ws.approval_status, ws.error_message, ws.created_at, ws.updated_at, ws.started_at, ws.completed_at FROM workflow_steps ws
+SELECT ws.id, ws.workflow_id, ws.step_index, ws.step_type, ws.agent, ws.agent_session_id, ws.status, ws.title, ws.input_context_json, ws.output_json, ws.review_result_json, ws.retry_count, ws.max_retries, ws.requires_approval, ws.approval_status, ws.error_message, ws.created_at, ws.updated_at, ws.started_at, ws.completed_at, ws.node_id FROM workflow_steps ws
 JOIN workflows w ON ws.workflow_id = w.id
 WHERE w.id = ? AND ws.step_index = w.current_step_index
 LIMIT 1
@@ -338,12 +561,13 @@ func (q *Queries) GetCurrentWorkflowStep(ctx context.Context, id string) (Workfl
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.NodeID,
 	)
 	return i, err
 }
 
 const getWorkflowByID = `-- name: GetWorkflowByID :one
-SELECT id, parent_session_id, title, state, plan_json, config_json, current_step_index, error_message, created_at, updated_at, completed_at FROM workflows WHERE id = ? LIMIT 1
+SELECT id, parent_session_id, title, state, plan_json, config_json, current_step_index, error_message, created_at, updated_at, completed_at, spec_json, current_node_id FROM workflows WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) GetWorkflowByID(ctx context.Context, id string) (Workflow, error) {
@@ -361,12 +585,14 @@ func (q *Queries) GetWorkflowByID(ctx context.Context, id string) (Workflow, err
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CompletedAt,
+		&i.SpecJson,
+		&i.CurrentNodeID,
 	)
 	return i, err
 }
 
 const getWorkflowStepByID = `-- name: GetWorkflowStepByID :one
-SELECT id, workflow_id, step_index, step_type, agent, agent_session_id, status, title, input_context_json, output_json, review_result_json, retry_count, max_retries, requires_approval, approval_status, error_message, created_at, updated_at, started_at, completed_at FROM workflow_steps WHERE id = ? LIMIT 1
+SELECT id, workflow_id, step_index, step_type, agent, agent_session_id, status, title, input_context_json, output_json, review_result_json, retry_count, max_retries, requires_approval, approval_status, error_message, created_at, updated_at, started_at, completed_at, node_id FROM workflow_steps WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) GetWorkflowStepByID(ctx context.Context, id string) (WorkflowStep, error) {
@@ -393,6 +619,47 @@ func (q *Queries) GetWorkflowStepByID(ctx context.Context, id string) (WorkflowS
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.NodeID,
+	)
+	return i, err
+}
+
+const getWorkflowStepByNodeID = `-- name: GetWorkflowStepByNodeID :one
+SELECT id, workflow_id, step_index, step_type, agent, agent_session_id, status, title, input_context_json, output_json, review_result_json, retry_count, max_retries, requires_approval, approval_status, error_message, created_at, updated_at, started_at, completed_at, node_id FROM workflow_steps 
+WHERE workflow_id = ? AND node_id = ?
+LIMIT 1
+`
+
+type GetWorkflowStepByNodeIDParams struct {
+	WorkflowID string         `json:"workflow_id"`
+	NodeID     sql.NullString `json:"node_id"`
+}
+
+func (q *Queries) GetWorkflowStepByNodeID(ctx context.Context, arg GetWorkflowStepByNodeIDParams) (WorkflowStep, error) {
+	row := q.queryRow(ctx, q.getWorkflowStepByNodeIDStmt, getWorkflowStepByNodeID, arg.WorkflowID, arg.NodeID)
+	var i WorkflowStep
+	err := row.Scan(
+		&i.ID,
+		&i.WorkflowID,
+		&i.StepIndex,
+		&i.StepType,
+		&i.Agent,
+		&i.AgentSessionID,
+		&i.Status,
+		&i.Title,
+		&i.InputContextJson,
+		&i.OutputJson,
+		&i.ReviewResultJson,
+		&i.RetryCount,
+		&i.MaxRetries,
+		&i.RequiresApproval,
+		&i.ApprovalStatus,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.NodeID,
 	)
 	return i, err
 }
@@ -402,7 +669,7 @@ UPDATE workflow_steps SET
     retry_count = retry_count + 1,
     status = 'pending'
 WHERE id = ?
-RETURNING id, workflow_id, step_index, step_type, agent, agent_session_id, status, title, input_context_json, output_json, review_result_json, retry_count, max_retries, requires_approval, approval_status, error_message, created_at, updated_at, started_at, completed_at
+RETURNING id, workflow_id, step_index, step_type, agent, agent_session_id, status, title, input_context_json, output_json, review_result_json, retry_count, max_retries, requires_approval, approval_status, error_message, created_at, updated_at, started_at, completed_at, node_id
 `
 
 func (q *Queries) IncrementStepRetry(ctx context.Context, id string) (WorkflowStep, error) {
@@ -429,12 +696,13 @@ func (q *Queries) IncrementStepRetry(ctx context.Context, id string) (WorkflowSt
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.NodeID,
 	)
 	return i, err
 }
 
 const listWorkflowSteps = `-- name: ListWorkflowSteps :many
-SELECT id, workflow_id, step_index, step_type, agent, agent_session_id, status, title, input_context_json, output_json, review_result_json, retry_count, max_retries, requires_approval, approval_status, error_message, created_at, updated_at, started_at, completed_at FROM workflow_steps 
+SELECT id, workflow_id, step_index, step_type, agent, agent_session_id, status, title, input_context_json, output_json, review_result_json, retry_count, max_retries, requires_approval, approval_status, error_message, created_at, updated_at, started_at, completed_at, node_id FROM workflow_steps 
 WHERE workflow_id = ? 
 ORDER BY step_index ASC
 `
@@ -469,6 +737,7 @@ func (q *Queries) ListWorkflowSteps(ctx context.Context, workflowID string) ([]W
 			&i.UpdatedAt,
 			&i.StartedAt,
 			&i.CompletedAt,
+			&i.NodeID,
 		); err != nil {
 			return nil, err
 		}
@@ -484,7 +753,7 @@ func (q *Queries) ListWorkflowSteps(ctx context.Context, workflowID string) ([]W
 }
 
 const listWorkflows = `-- name: ListWorkflows :many
-SELECT id, parent_session_id, title, state, plan_json, config_json, current_step_index, error_message, created_at, updated_at, completed_at FROM workflows ORDER BY updated_at DESC
+SELECT id, parent_session_id, title, state, plan_json, config_json, current_step_index, error_message, created_at, updated_at, completed_at, spec_json, current_node_id FROM workflows ORDER BY updated_at DESC
 `
 
 func (q *Queries) ListWorkflows(ctx context.Context) ([]Workflow, error) {
@@ -508,6 +777,8 @@ func (q *Queries) ListWorkflows(ctx context.Context) ([]Workflow, error) {
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.CompletedAt,
+			&i.SpecJson,
+			&i.CurrentNodeID,
 		); err != nil {
 			return nil, err
 		}
@@ -523,7 +794,7 @@ func (q *Queries) ListWorkflows(ctx context.Context) ([]Workflow, error) {
 }
 
 const listWorkflowsBySession = `-- name: ListWorkflowsBySession :many
-SELECT id, parent_session_id, title, state, plan_json, config_json, current_step_index, error_message, created_at, updated_at, completed_at FROM workflows WHERE parent_session_id = ? ORDER BY updated_at DESC
+SELECT id, parent_session_id, title, state, plan_json, config_json, current_step_index, error_message, created_at, updated_at, completed_at, spec_json, current_node_id FROM workflows WHERE parent_session_id = ? ORDER BY updated_at DESC
 `
 
 func (q *Queries) ListWorkflowsBySession(ctx context.Context, parentSessionID sql.NullString) ([]Workflow, error) {
@@ -547,6 +818,8 @@ func (q *Queries) ListWorkflowsBySession(ctx context.Context, parentSessionID sq
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.CompletedAt,
+			&i.SpecJson,
+			&i.CurrentNodeID,
 		); err != nil {
 			return nil, err
 		}
@@ -562,7 +835,7 @@ func (q *Queries) ListWorkflowsBySession(ctx context.Context, parentSessionID sq
 }
 
 const listWorkflowsByState = `-- name: ListWorkflowsByState :many
-SELECT id, parent_session_id, title, state, plan_json, config_json, current_step_index, error_message, created_at, updated_at, completed_at FROM workflows WHERE state = ? ORDER BY updated_at DESC
+SELECT id, parent_session_id, title, state, plan_json, config_json, current_step_index, error_message, created_at, updated_at, completed_at, spec_json, current_node_id FROM workflows WHERE state = ? ORDER BY updated_at DESC
 `
 
 func (q *Queries) ListWorkflowsByState(ctx context.Context, state string) ([]Workflow, error) {
@@ -586,6 +859,8 @@ func (q *Queries) ListWorkflowsByState(ctx context.Context, state string) ([]Wor
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.CompletedAt,
+			&i.SpecJson,
+			&i.CurrentNodeID,
 		); err != nil {
 			return nil, err
 		}
@@ -604,7 +879,7 @@ const setStepAgentSession = `-- name: SetStepAgentSession :one
 UPDATE workflow_steps SET
     agent_session_id = ?
 WHERE id = ?
-RETURNING id, workflow_id, step_index, step_type, agent, agent_session_id, status, title, input_context_json, output_json, review_result_json, retry_count, max_retries, requires_approval, approval_status, error_message, created_at, updated_at, started_at, completed_at
+RETURNING id, workflow_id, step_index, step_type, agent, agent_session_id, status, title, input_context_json, output_json, review_result_json, retry_count, max_retries, requires_approval, approval_status, error_message, created_at, updated_at, started_at, completed_at, node_id
 `
 
 type SetStepAgentSessionParams struct {
@@ -636,6 +911,7 @@ func (q *Queries) SetStepAgentSession(ctx context.Context, arg SetStepAgentSessi
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.NodeID,
 	)
 	return i, err
 }
@@ -644,7 +920,7 @@ const setStepApprovalStatus = `-- name: SetStepApprovalStatus :one
 UPDATE workflow_steps SET
     approval_status = ?
 WHERE id = ?
-RETURNING id, workflow_id, step_index, step_type, agent, agent_session_id, status, title, input_context_json, output_json, review_result_json, retry_count, max_retries, requires_approval, approval_status, error_message, created_at, updated_at, started_at, completed_at
+RETURNING id, workflow_id, step_index, step_type, agent, agent_session_id, status, title, input_context_json, output_json, review_result_json, retry_count, max_retries, requires_approval, approval_status, error_message, created_at, updated_at, started_at, completed_at, node_id
 `
 
 type SetStepApprovalStatusParams struct {
@@ -676,6 +952,7 @@ func (q *Queries) SetStepApprovalStatus(ctx context.Context, arg SetStepApproval
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.NodeID,
 	)
 	return i, err
 }
@@ -685,7 +962,7 @@ UPDATE workflow_steps SET
     status = 'running',
     started_at = strftime('%s','now')
 WHERE id = ?
-RETURNING id, workflow_id, step_index, step_type, agent, agent_session_id, status, title, input_context_json, output_json, review_result_json, retry_count, max_retries, requires_approval, approval_status, error_message, created_at, updated_at, started_at, completed_at
+RETURNING id, workflow_id, step_index, step_type, agent, agent_session_id, status, title, input_context_json, output_json, review_result_json, retry_count, max_retries, requires_approval, approval_status, error_message, created_at, updated_at, started_at, completed_at, node_id
 `
 
 func (q *Queries) StartWorkflowStep(ctx context.Context, id string) (WorkflowStep, error) {
@@ -712,6 +989,40 @@ func (q *Queries) StartWorkflowStep(ctx context.Context, id string) (WorkflowSte
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.NodeID,
+	)
+	return i, err
+}
+
+const updateWorkflowCurrentNode = `-- name: UpdateWorkflowCurrentNode :one
+UPDATE workflows SET
+    current_node_id = ?
+WHERE id = ?
+RETURNING id, parent_session_id, title, state, plan_json, config_json, current_step_index, error_message, created_at, updated_at, completed_at, spec_json, current_node_id
+`
+
+type UpdateWorkflowCurrentNodeParams struct {
+	CurrentNodeID sql.NullString `json:"current_node_id"`
+	ID            string         `json:"id"`
+}
+
+func (q *Queries) UpdateWorkflowCurrentNode(ctx context.Context, arg UpdateWorkflowCurrentNodeParams) (Workflow, error) {
+	row := q.queryRow(ctx, q.updateWorkflowCurrentNodeStmt, updateWorkflowCurrentNode, arg.CurrentNodeID, arg.ID)
+	var i Workflow
+	err := row.Scan(
+		&i.ID,
+		&i.ParentSessionID,
+		&i.Title,
+		&i.State,
+		&i.PlanJson,
+		&i.ConfigJson,
+		&i.CurrentStepIndex,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+		&i.SpecJson,
+		&i.CurrentNodeID,
 	)
 	return i, err
 }
@@ -721,7 +1032,7 @@ UPDATE workflows SET
     state = ?,
     error_message = ?
 WHERE id = ?
-RETURNING id, parent_session_id, title, state, plan_json, config_json, current_step_index, error_message, created_at, updated_at, completed_at
+RETURNING id, parent_session_id, title, state, plan_json, config_json, current_step_index, error_message, created_at, updated_at, completed_at, spec_json, current_node_id
 `
 
 type UpdateWorkflowStateParams struct {
@@ -745,6 +1056,8 @@ func (q *Queries) UpdateWorkflowState(ctx context.Context, arg UpdateWorkflowSta
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CompletedAt,
+		&i.SpecJson,
+		&i.CurrentNodeID,
 	)
 	return i, err
 }
@@ -753,7 +1066,7 @@ const updateWorkflowStep = `-- name: UpdateWorkflowStep :one
 UPDATE workflows SET
     current_step_index = ?
 WHERE id = ?
-RETURNING id, parent_session_id, title, state, plan_json, config_json, current_step_index, error_message, created_at, updated_at, completed_at
+RETURNING id, parent_session_id, title, state, plan_json, config_json, current_step_index, error_message, created_at, updated_at, completed_at, spec_json, current_node_id
 `
 
 type UpdateWorkflowStepParams struct {
@@ -776,6 +1089,8 @@ func (q *Queries) UpdateWorkflowStep(ctx context.Context, arg UpdateWorkflowStep
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CompletedAt,
+		&i.SpecJson,
+		&i.CurrentNodeID,
 	)
 	return i, err
 }
@@ -785,7 +1100,7 @@ UPDATE workflow_steps SET
     status = ?,
     error_message = ?
 WHERE id = ?
-RETURNING id, workflow_id, step_index, step_type, agent, agent_session_id, status, title, input_context_json, output_json, review_result_json, retry_count, max_retries, requires_approval, approval_status, error_message, created_at, updated_at, started_at, completed_at
+RETURNING id, workflow_id, step_index, step_type, agent, agent_session_id, status, title, input_context_json, output_json, review_result_json, retry_count, max_retries, requires_approval, approval_status, error_message, created_at, updated_at, started_at, completed_at, node_id
 `
 
 type UpdateWorkflowStepStatusParams struct {
@@ -818,6 +1133,7 @@ func (q *Queries) UpdateWorkflowStepStatus(ctx context.Context, arg UpdateWorkfl
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.NodeID,
 	)
 	return i, err
 }

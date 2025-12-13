@@ -56,6 +56,8 @@ type Workflow struct {
 	CreatedAt        int64          `json:"created_at"`
 	UpdatedAt        int64          `json:"updated_at"`
 	CompletedAt      sql.NullInt64  `json:"completed_at"`
+	SpecJson         sql.NullString `json:"spec_json"`
+	CurrentNodeID    sql.NullString `json:"current_node_id"`
 }
 
 type WorkflowStep struct {
@@ -79,4 +81,5 @@ type WorkflowStep struct {
 	UpdatedAt        int64          `json:"updated_at"`
 	StartedAt        sql.NullInt64  `json:"started_at"`
 	CompletedAt      sql.NullInt64  `json:"completed_at"`
+	NodeID           sql.NullString `json:"node_id"`
 }

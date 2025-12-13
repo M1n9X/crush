@@ -118,18 +118,165 @@ func (e *Engine) Create(ctx context.Context, opts CreateOptions) (*Workflow, err
 	return &workflow, nil
 }
 
+// CreateFromSpec creates a new workflow from a WorkflowSpec (DAG mode).
+func (e *Engine) CreateFromSpec(ctx context.Context, spec *WorkflowSpec, opts CreateOptions) (*Workflow, error) {
+	if err := spec.Validate(); err != nil {
+		return nil, fmt.Errorf("validate spec: %w", err)
+	}
+
+	specJSON, err := MarshalSpecJSON(spec)
+	if err != nil {
+		return nil, fmt.Errorf("marshal spec: %w", err)
+	}
+
+	startNode := spec.GetStartNode()
+	if startNode == nil {
+		return nil, ErrNoStartNode
+	}
+
+	workflowID := uuid.New().String()
+	dbWorkflow, err := e.queries.CreateWorkflowWithSpec(ctx, db.CreateWorkflowWithSpecParams{
+		ID:               workflowID,
+		ParentSessionID:  sql.NullString{String: opts.ParentSessionID, Valid: opts.ParentSessionID != ""},
+		Title:            opts.Title,
+		State:            string(WorkflowStateDraft),
+		PlanJson:         sql.NullString{},
+		ConfigJson:       sql.NullString{},
+		SpecJson:         sql.NullString{String: specJSON, Valid: true},
+		CurrentStepIndex: 0,
+		CurrentNodeID:    sql.NullString{String: startNode.ID, Valid: true},
+		ErrorMessage:     sql.NullString{},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create workflow: %w", err)
+	}
+
+	// Create workflow steps from spec nodes
+	for i, node := range spec.Nodes {
+		if node.IsTerminal() {
+			continue // Skip terminal nodes
+		}
+
+		agent, err := e.resolveAgentForNode(&node)
+		if err != nil {
+			return nil, fmt.Errorf("resolve agent for node %q: %w", node.ID, err)
+		}
+
+		stepID := uuid.New().String()
+		maxRetries := int64(1)
+		if node.OnError != nil && node.OnError.Retry > 0 {
+			maxRetries = int64(node.OnError.Retry)
+		}
+
+		_, err = e.queries.CreateWorkflowStepWithNode(ctx, db.CreateWorkflowStepWithNodeParams{
+			ID:               stepID,
+			WorkflowID:       workflowID,
+			StepIndex:        int64(i),
+			StepType:         getStepTypeFromCapabilities(node.Capabilities),
+			Agent:            agent,
+			AgentSessionID:   sql.NullString{},
+			Status:           string(StepStatusPending),
+			Title:            sql.NullString{String: node.Name, Valid: node.Name != ""},
+			InputContextJson: sql.NullString{},
+			OutputJson:       sql.NullString{},
+			ReviewResultJson: sql.NullString{},
+			RetryCount:       0,
+			MaxRetries:       maxRetries,
+			RequiresApproval: boolToInt64(node.RequiresApproval),
+			ApprovalStatus:   sql.NullString{},
+			ErrorMessage:     sql.NullString{},
+			NodeID:           sql.NullString{String: node.ID, Valid: true},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("create step for node %q: %w", node.ID, err)
+		}
+	}
+
+	workflow := WorkflowFromDB(dbWorkflow)
+	return &workflow, nil
+}
+
+// resolveAgentForNode finds the best agent for a node based on capabilities.
+func (e *Engine) resolveAgentForNode(node *NodeSpec) (string, error) {
+	if e.registry == nil {
+		if len(node.PreferredAgents) > 0 {
+			return node.PreferredAgents[0], nil
+		}
+		return "", ErrNoSubagentAvailable
+	}
+
+	// Try preferred agents first
+	for _, agentName := range node.PreferredAgents {
+		reg, err := e.registry.Resolve(agentName)
+		if err == nil && hasCapabilities(reg, node.Capabilities) {
+			return agentName, nil
+		}
+	}
+
+	// Fallback to any agent with matching capabilities
+	for _, reg := range e.registry.List() {
+		if hasCapabilities(reg, node.Capabilities) {
+			return reg.Profile.Name, nil
+		}
+	}
+
+	// Last resort: use first preferred agent if available
+	if len(node.PreferredAgents) > 0 {
+		return node.PreferredAgents[0], nil
+	}
+
+	return "", fmt.Errorf("%w: no agent matches capabilities %v", ErrNoSubagentAvailable, node.Capabilities)
+}
+
+// hasCapabilities checks if a registration has all required capabilities.
+func hasCapabilities(reg subagent.Registration, required []string) bool {
+	caps := make(map[string]bool)
+	for _, c := range reg.Agent.Capabilities() {
+		caps[string(c)] = true
+	}
+	for _, r := range required {
+		if !caps[r] {
+			return false
+		}
+	}
+	return true
+}
+
+// getStepTypeFromCapabilities infers step type from capabilities.
+func getStepTypeFromCapabilities(caps []string) string {
+	for _, c := range caps {
+		switch c {
+		case "plan":
+			return string(StepTypePlan)
+		case "code":
+			return string(StepTypeCode)
+		case "review":
+			return string(StepTypeReview)
+		case "docs":
+			return string(StepTypeDocs)
+		}
+	}
+	if len(caps) > 0 {
+		return caps[0]
+	}
+	return string(StepTypeCode)
+}
+
 // Run starts or resumes workflow execution.
 func (e *Engine) Run(ctx context.Context, workflowID string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	workflow, err := e.getWorkflow(ctx, workflowID)
+	dbWorkflow, err := e.queries.GetWorkflowByID(ctx, workflowID)
 	if err != nil {
-		return err
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrWorkflowNotFound
+		}
+		return fmt.Errorf("get workflow: %w", err)
 	}
 
 	// Validate state transition
-	switch workflow.State {
+	switch WorkflowState(dbWorkflow.State) {
 	case WorkflowStateDraft, WorkflowStatePaused, WorkflowStateInterrupted:
 		// Valid states to start/resume from
 	case WorkflowStateRunning:
@@ -137,7 +284,7 @@ func (e *Engine) Run(ctx context.Context, workflowID string) error {
 	case WorkflowStateCompleted, WorkflowStateFailed:
 		return ErrInvalidState
 	case WorkflowStateWaitingInput:
-		step, err := e.queries.GetCurrentWorkflowStep(ctx, workflowID)
+		step, err := e.getCurrentStep(ctx, dbWorkflow)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				// No steps remaining; allow runLoop to complete the workflow.
@@ -151,7 +298,10 @@ func (e *Engine) Run(ctx context.Context, workflowID string) error {
 				return ErrApprovalRequired
 			}
 			if step.ApprovalStatus.String == string(ApprovalRejected) {
-				return e.failWorkflow(ctx, workflowID, "step approval rejected")
+				// Sequential workflows treat rejection as terminal failure; DAG workflows may have on_reject transitions.
+				if !e.isDAGWorkflow(dbWorkflow) {
+					return e.failWorkflow(ctx, workflowID, "step approval rejected")
+				}
 			}
 		}
 	}
@@ -174,6 +324,17 @@ func (e *Engine) Run(ctx context.Context, workflowID string) error {
 	return e.runLoop(ctx, workflowID)
 }
 
+func (e *Engine) isDAGWorkflow(w db.Workflow) bool {
+	return w.SpecJson.Valid && w.SpecJson.String != ""
+}
+
+func (e *Engine) getCurrentStep(ctx context.Context, w db.Workflow) (db.WorkflowStep, error) {
+	if e.isDAGWorkflow(w) {
+		return e.queries.GetCurrentDAGStep(ctx, w.ID)
+	}
+	return e.queries.GetCurrentWorkflowStep(ctx, w.ID)
+}
+
 // runLoop executes the workflow step by step.
 func (e *Engine) runLoop(ctx context.Context, workflowID string) error {
 	for {
@@ -188,6 +349,27 @@ func (e *Engine) runLoop(ctx context.Context, workflowID string) error {
 			return ctx.Err()
 		default:
 		}
+
+		workflow, err := e.queries.GetWorkflowByID(ctx, workflowID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrWorkflowNotFound
+			}
+			return fmt.Errorf("get workflow: %w", err)
+		}
+
+		if e.isDAGWorkflow(workflow) {
+			done, err := e.runDAGTick(ctx, workflow)
+			if err != nil {
+				return err
+			}
+			if done {
+				return nil
+			}
+			continue
+		}
+
+		// --- Sequential mode ---
 
 		// Get current step
 		step, err := e.queries.GetCurrentWorkflowStep(ctx, workflowID)
@@ -238,7 +420,6 @@ func (e *Engine) runLoop(ctx context.Context, workflowID string) error {
 		}
 
 		// Advance to next step
-		workflow, _ := e.queries.GetWorkflowByID(ctx, workflowID)
 		steps, _ := e.queries.ListWorkflowSteps(ctx, workflowID)
 
 		nextIndex := workflow.CurrentStepIndex + 1
@@ -254,6 +435,184 @@ func (e *Engine) runLoop(ctx context.Context, workflowID string) error {
 			return fmt.Errorf("advance step: %w", err)
 		}
 	}
+}
+
+func (e *Engine) runDAGTick(ctx context.Context, workflow db.Workflow) (bool, error) {
+	spec, err := ParseSpecJSON([]byte(workflow.SpecJson.String))
+	if err != nil {
+		return true, e.failWorkflow(ctx, workflow.ID, fmt.Sprintf("invalid workflow spec_json: %v", err))
+	}
+
+	currentNodeID := ""
+	if workflow.CurrentNodeID.Valid {
+		currentNodeID = workflow.CurrentNodeID.String
+	}
+	if currentNodeID == "" {
+		start := spec.GetStartNode()
+		if start == nil {
+			return true, e.failWorkflow(ctx, workflow.ID, ErrNoStartNode.Error())
+		}
+		_, err := e.queries.UpdateWorkflowCurrentNode(ctx, db.UpdateWorkflowCurrentNodeParams{
+			CurrentNodeID: sql.NullString{String: start.ID, Valid: true},
+			ID:            workflow.ID,
+		})
+		if err != nil {
+			return true, fmt.Errorf("set start node: %w", err)
+		}
+		return false, nil
+	}
+
+	node := spec.GetNode(currentNodeID)
+	if node == nil {
+		return true, e.failWorkflow(ctx, workflow.ID, fmt.Sprintf("current node %q not found in workflow spec", currentNodeID))
+	}
+	if node.Terminal == "success" {
+		return true, e.completeWorkflow(ctx, workflow.ID)
+	}
+	if node.Terminal == "fail" {
+		return true, e.failWorkflow(ctx, workflow.ID, fmt.Sprintf("reached terminal fail node %q", currentNodeID))
+	}
+
+	step, err := e.queries.GetCurrentDAGStep(ctx, workflow.ID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return true, e.failWorkflow(ctx, workflow.ID, fmt.Sprintf("no step found for current node %q", currentNodeID))
+		}
+		return true, fmt.Errorf("get current DAG step: %w", err)
+	}
+
+	// If step requires approval and is waiting, handle approval result before executing.
+	if step.RequiresApproval != 0 && step.Status == string(StepStatusWaiting) {
+		if !step.ApprovalStatus.Valid || step.ApprovalStatus.String == string(ApprovalPending) {
+			_, _ = e.queries.UpdateWorkflowState(ctx, db.UpdateWorkflowStateParams{
+				State:        string(WorkflowStateWaitingInput),
+				ErrorMessage: sql.NullString{},
+				ID:           workflow.ID,
+			})
+			return true, ErrApprovalRequired
+		}
+
+		if step.ApprovalStatus.String == string(ApprovalRejected) {
+			next := spec.GetNextNodes(currentNodeID, StepStatusCompleted, false)
+			if len(next) == 0 {
+				return true, e.failWorkflow(ctx, workflow.ID, "step approval rejected")
+			}
+			done, err := e.transitionToDAGNode(ctx, workflow.ID, spec, next[0])
+			if err != nil {
+				return true, err
+			}
+			return done, nil
+		}
+	}
+
+	// If the step already has a terminal status (e.g., after interruption), advance without re-executing.
+	switch StepStatus(step.Status) {
+	case StepStatusCompleted, StepStatusFailed:
+		approved := step.ApprovalStatus.Valid && step.ApprovalStatus.String == string(ApprovalApproved)
+		next := spec.GetNextNodes(currentNodeID, StepStatus(step.Status), approved)
+		if len(next) == 0 {
+			if StepStatus(step.Status) == StepStatusCompleted {
+				return true, e.completeWorkflow(ctx, workflow.ID)
+			}
+			errMsg := "step failed"
+			if step.ErrorMessage.Valid && step.ErrorMessage.String != "" {
+				errMsg = step.ErrorMessage.String
+			}
+			return true, e.failWorkflow(ctx, workflow.ID, errMsg)
+		}
+		done, err := e.transitionToDAGNode(ctx, workflow.ID, spec, next[0])
+		if err != nil {
+			return true, err
+		}
+		return done, nil
+	}
+
+	// Execute the step
+	err = e.executeStep(ctx, workflow.ID, step)
+	if err != nil {
+		if errors.Is(err, ErrApprovalRequired) {
+			_, _ = e.queries.UpdateWorkflowState(ctx, db.UpdateWorkflowStateParams{
+				State:        string(WorkflowStateWaitingInput),
+				ErrorMessage: sql.NullString{},
+				ID:           workflow.ID,
+			})
+			return true, ErrApprovalRequired
+		}
+
+		// Retry if allowed
+		if step.RetryCount < step.MaxRetries {
+			_, _ = e.queries.IncrementStepRetry(ctx, step.ID)
+			return false, nil
+		}
+
+		next := spec.GetNextNodes(currentNodeID, StepStatusFailed, false)
+		if len(next) == 0 {
+			return true, e.failWorkflow(ctx, workflow.ID, err.Error())
+		}
+		done, terr := e.transitionToDAGNode(ctx, workflow.ID, spec, next[0])
+		if terr != nil {
+			return true, terr
+		}
+		return done, nil
+	}
+
+	approved := step.ApprovalStatus.Valid && step.ApprovalStatus.String == string(ApprovalApproved)
+	next := spec.GetNextNodes(currentNodeID, StepStatusCompleted, approved)
+	if len(next) == 0 {
+		return true, e.completeWorkflow(ctx, workflow.ID)
+	}
+
+	done, err := e.transitionToDAGNode(ctx, workflow.ID, spec, next[0])
+	if err != nil {
+		return true, err
+	}
+	return done, nil
+}
+
+func (e *Engine) transitionToDAGNode(ctx context.Context, workflowID string, spec *WorkflowSpec, nextNodeID string) (bool, error) {
+	node := spec.GetNode(nextNodeID)
+	if node == nil {
+		return true, e.failWorkflow(ctx, workflowID, fmt.Sprintf("next node %q not found in workflow spec", nextNodeID))
+	}
+
+	if node.Terminal == "success" {
+		return true, e.completeWorkflow(ctx, workflowID)
+	}
+	if node.Terminal == "fail" {
+		return true, e.failWorkflow(ctx, workflowID, fmt.Sprintf("reached terminal fail node %q", nextNodeID))
+	}
+
+	nextStep, err := e.queries.GetWorkflowStepByNodeID(ctx, db.GetWorkflowStepByNodeIDParams{
+		WorkflowID: workflowID,
+		NodeID:     sql.NullString{String: nextNodeID, Valid: true},
+	})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return true, e.failWorkflow(ctx, workflowID, fmt.Sprintf("no step found for next node %q", nextNodeID))
+		}
+		return true, fmt.Errorf("get step for next node: %w", err)
+	}
+
+	if err := e.queries.ResetWorkflowStepRuntime(ctx, nextStep.ID); err != nil {
+		return true, fmt.Errorf("reset step for node %q: %w", nextNodeID, err)
+	}
+
+	if _, err := e.queries.UpdateWorkflowCurrentNode(ctx, db.UpdateWorkflowCurrentNodeParams{
+		CurrentNodeID: sql.NullString{String: nextNodeID, Valid: true},
+		ID:            workflowID,
+	}); err != nil {
+		return true, fmt.Errorf("update current node: %w", err)
+	}
+
+	// Keep current_step_index roughly aligned with the node's configured step_index for UI/debugging.
+	if _, err := e.queries.UpdateWorkflowStep(ctx, db.UpdateWorkflowStepParams{
+		CurrentStepIndex: nextStep.StepIndex,
+		ID:               workflowID,
+	}); err != nil {
+		return true, fmt.Errorf("update current step index: %w", err)
+	}
+
+	return false, nil
 }
 
 // executeStep executes a single workflow step.
