@@ -43,3 +43,40 @@ type Session struct {
 	CreatedAt        int64          `json:"created_at"`
 	SummaryMessageID sql.NullString `json:"summary_message_id"`
 }
+
+type Workflow struct {
+	ID               string         `json:"id"`
+	ParentSessionID  sql.NullString `json:"parent_session_id"`
+	Title            string         `json:"title"`
+	State            string         `json:"state"`
+	PlanJson         sql.NullString `json:"plan_json"`
+	ConfigJson       sql.NullString `json:"config_json"`
+	CurrentStepIndex int64          `json:"current_step_index"`
+	ErrorMessage     sql.NullString `json:"error_message"`
+	CreatedAt        int64          `json:"created_at"`
+	UpdatedAt        int64          `json:"updated_at"`
+	CompletedAt      sql.NullInt64  `json:"completed_at"`
+}
+
+type WorkflowStep struct {
+	ID               string         `json:"id"`
+	WorkflowID       string         `json:"workflow_id"`
+	StepIndex        int64          `json:"step_index"`
+	StepType         string         `json:"step_type"`
+	Agent            string         `json:"agent"`
+	AgentSessionID   sql.NullString `json:"agent_session_id"`
+	Status           string         `json:"status"`
+	Title            sql.NullString `json:"title"`
+	InputContextJson sql.NullString `json:"input_context_json"`
+	OutputJson       sql.NullString `json:"output_json"`
+	ReviewResultJson sql.NullString `json:"review_result_json"`
+	RetryCount       int64          `json:"retry_count"`
+	MaxRetries       int64          `json:"max_retries"`
+	RequiresApproval int64          `json:"requires_approval"`
+	ApprovalStatus   sql.NullString `json:"approval_status"`
+	ErrorMessage     sql.NullString `json:"error_message"`
+	CreatedAt        int64          `json:"created_at"`
+	UpdatedAt        int64          `json:"updated_at"`
+	StartedAt        sql.NullInt64  `json:"started_at"`
+	CompletedAt      sql.NullInt64  `json:"completed_at"`
+}

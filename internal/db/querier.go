@@ -6,28 +6,50 @@ package db
 
 import (
 	"context"
+	"database/sql"
 )
 
 type Querier interface {
+	CompleteWorkflow(ctx context.Context, arg CompleteWorkflowParams) (Workflow, error)
+	CompleteWorkflowStep(ctx context.Context, arg CompleteWorkflowStepParams) (WorkflowStep, error)
 	CreateFile(ctx context.Context, arg CreateFileParams) (File, error)
 	CreateMessage(ctx context.Context, arg CreateMessageParams) (Message, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
+	CreateWorkflow(ctx context.Context, arg CreateWorkflowParams) (Workflow, error)
+	CreateWorkflowStep(ctx context.Context, arg CreateWorkflowStepParams) (WorkflowStep, error)
 	DeleteFile(ctx context.Context, id string) error
 	DeleteMessage(ctx context.Context, id string) error
 	DeleteSession(ctx context.Context, id string) error
 	DeleteSessionFiles(ctx context.Context, sessionID string) error
 	DeleteSessionMessages(ctx context.Context, sessionID string) error
+	DeleteWorkflow(ctx context.Context, id string) error
+	DeleteWorkflowSteps(ctx context.Context, workflowID string) error
+	FailWorkflowStep(ctx context.Context, arg FailWorkflowStepParams) (WorkflowStep, error)
+	GetCurrentWorkflowStep(ctx context.Context, id string) (WorkflowStep, error)
 	GetFile(ctx context.Context, id string) (File, error)
 	GetFileByPathAndSession(ctx context.Context, arg GetFileByPathAndSessionParams) (File, error)
 	GetMessage(ctx context.Context, id string) (Message, error)
 	GetSessionByID(ctx context.Context, id string) (Session, error)
+	GetWorkflowByID(ctx context.Context, id string) (Workflow, error)
+	GetWorkflowStepByID(ctx context.Context, id string) (WorkflowStep, error)
+	IncrementStepRetry(ctx context.Context, id string) (WorkflowStep, error)
 	ListFilesByPath(ctx context.Context, path string) ([]File, error)
 	ListFilesBySession(ctx context.Context, sessionID string) ([]File, error)
 	ListLatestSessionFiles(ctx context.Context, sessionID string) ([]File, error)
 	ListMessagesBySession(ctx context.Context, sessionID string) ([]Message, error)
 	ListSessions(ctx context.Context) ([]Session, error)
+	ListWorkflowSteps(ctx context.Context, workflowID string) ([]WorkflowStep, error)
+	ListWorkflows(ctx context.Context) ([]Workflow, error)
+	ListWorkflowsBySession(ctx context.Context, parentSessionID sql.NullString) ([]Workflow, error)
+	ListWorkflowsByState(ctx context.Context, state string) ([]Workflow, error)
+	SetStepAgentSession(ctx context.Context, arg SetStepAgentSessionParams) (WorkflowStep, error)
+	SetStepApprovalStatus(ctx context.Context, arg SetStepApprovalStatusParams) (WorkflowStep, error)
+	StartWorkflowStep(ctx context.Context, id string) (WorkflowStep, error)
 	UpdateMessage(ctx context.Context, arg UpdateMessageParams) error
 	UpdateSession(ctx context.Context, arg UpdateSessionParams) (Session, error)
+	UpdateWorkflowState(ctx context.Context, arg UpdateWorkflowStateParams) (Workflow, error)
+	UpdateWorkflowStep(ctx context.Context, arg UpdateWorkflowStepParams) (Workflow, error)
+	UpdateWorkflowStepStatus(ctx context.Context, arg UpdateWorkflowStepStatusParams) (WorkflowStep, error)
 }
 
 var _ Querier = (*Queries)(nil)

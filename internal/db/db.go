@@ -24,6 +24,12 @@ func New(db DBTX) *Queries {
 func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	q := Queries{db: db}
 	var err error
+	if q.completeWorkflowStmt, err = db.PrepareContext(ctx, completeWorkflow); err != nil {
+		return nil, fmt.Errorf("error preparing query CompleteWorkflow: %w", err)
+	}
+	if q.completeWorkflowStepStmt, err = db.PrepareContext(ctx, completeWorkflowStep); err != nil {
+		return nil, fmt.Errorf("error preparing query CompleteWorkflowStep: %w", err)
+	}
 	if q.createFileStmt, err = db.PrepareContext(ctx, createFile); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateFile: %w", err)
 	}
@@ -32,6 +38,12 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.createSessionStmt, err = db.PrepareContext(ctx, createSession); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateSession: %w", err)
+	}
+	if q.createWorkflowStmt, err = db.PrepareContext(ctx, createWorkflow); err != nil {
+		return nil, fmt.Errorf("error preparing query CreateWorkflow: %w", err)
+	}
+	if q.createWorkflowStepStmt, err = db.PrepareContext(ctx, createWorkflowStep); err != nil {
+		return nil, fmt.Errorf("error preparing query CreateWorkflowStep: %w", err)
 	}
 	if q.deleteFileStmt, err = db.PrepareContext(ctx, deleteFile); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteFile: %w", err)
@@ -48,6 +60,18 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.deleteSessionMessagesStmt, err = db.PrepareContext(ctx, deleteSessionMessages); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteSessionMessages: %w", err)
 	}
+	if q.deleteWorkflowStmt, err = db.PrepareContext(ctx, deleteWorkflow); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteWorkflow: %w", err)
+	}
+	if q.deleteWorkflowStepsStmt, err = db.PrepareContext(ctx, deleteWorkflowSteps); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteWorkflowSteps: %w", err)
+	}
+	if q.failWorkflowStepStmt, err = db.PrepareContext(ctx, failWorkflowStep); err != nil {
+		return nil, fmt.Errorf("error preparing query FailWorkflowStep: %w", err)
+	}
+	if q.getCurrentWorkflowStepStmt, err = db.PrepareContext(ctx, getCurrentWorkflowStep); err != nil {
+		return nil, fmt.Errorf("error preparing query GetCurrentWorkflowStep: %w", err)
+	}
 	if q.getFileStmt, err = db.PrepareContext(ctx, getFile); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFile: %w", err)
 	}
@@ -59,6 +83,15 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.getSessionByIDStmt, err = db.PrepareContext(ctx, getSessionByID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetSessionByID: %w", err)
+	}
+	if q.getWorkflowByIDStmt, err = db.PrepareContext(ctx, getWorkflowByID); err != nil {
+		return nil, fmt.Errorf("error preparing query GetWorkflowByID: %w", err)
+	}
+	if q.getWorkflowStepByIDStmt, err = db.PrepareContext(ctx, getWorkflowStepByID); err != nil {
+		return nil, fmt.Errorf("error preparing query GetWorkflowStepByID: %w", err)
+	}
+	if q.incrementStepRetryStmt, err = db.PrepareContext(ctx, incrementStepRetry); err != nil {
+		return nil, fmt.Errorf("error preparing query IncrementStepRetry: %w", err)
 	}
 	if q.listFilesByPathStmt, err = db.PrepareContext(ctx, listFilesByPath); err != nil {
 		return nil, fmt.Errorf("error preparing query ListFilesByPath: %w", err)
@@ -75,17 +108,57 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listSessionsStmt, err = db.PrepareContext(ctx, listSessions); err != nil {
 		return nil, fmt.Errorf("error preparing query ListSessions: %w", err)
 	}
+	if q.listWorkflowStepsStmt, err = db.PrepareContext(ctx, listWorkflowSteps); err != nil {
+		return nil, fmt.Errorf("error preparing query ListWorkflowSteps: %w", err)
+	}
+	if q.listWorkflowsStmt, err = db.PrepareContext(ctx, listWorkflows); err != nil {
+		return nil, fmt.Errorf("error preparing query ListWorkflows: %w", err)
+	}
+	if q.listWorkflowsBySessionStmt, err = db.PrepareContext(ctx, listWorkflowsBySession); err != nil {
+		return nil, fmt.Errorf("error preparing query ListWorkflowsBySession: %w", err)
+	}
+	if q.listWorkflowsByStateStmt, err = db.PrepareContext(ctx, listWorkflowsByState); err != nil {
+		return nil, fmt.Errorf("error preparing query ListWorkflowsByState: %w", err)
+	}
+	if q.setStepAgentSessionStmt, err = db.PrepareContext(ctx, setStepAgentSession); err != nil {
+		return nil, fmt.Errorf("error preparing query SetStepAgentSession: %w", err)
+	}
+	if q.setStepApprovalStatusStmt, err = db.PrepareContext(ctx, setStepApprovalStatus); err != nil {
+		return nil, fmt.Errorf("error preparing query SetStepApprovalStatus: %w", err)
+	}
+	if q.startWorkflowStepStmt, err = db.PrepareContext(ctx, startWorkflowStep); err != nil {
+		return nil, fmt.Errorf("error preparing query StartWorkflowStep: %w", err)
+	}
 	if q.updateMessageStmt, err = db.PrepareContext(ctx, updateMessage); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateMessage: %w", err)
 	}
 	if q.updateSessionStmt, err = db.PrepareContext(ctx, updateSession); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateSession: %w", err)
 	}
+	if q.updateWorkflowStateStmt, err = db.PrepareContext(ctx, updateWorkflowState); err != nil {
+		return nil, fmt.Errorf("error preparing query UpdateWorkflowState: %w", err)
+	}
+	if q.updateWorkflowStepStmt, err = db.PrepareContext(ctx, updateWorkflowStep); err != nil {
+		return nil, fmt.Errorf("error preparing query UpdateWorkflowStep: %w", err)
+	}
+	if q.updateWorkflowStepStatusStmt, err = db.PrepareContext(ctx, updateWorkflowStepStatus); err != nil {
+		return nil, fmt.Errorf("error preparing query UpdateWorkflowStepStatus: %w", err)
+	}
 	return &q, nil
 }
 
 func (q *Queries) Close() error {
 	var err error
+	if q.completeWorkflowStmt != nil {
+		if cerr := q.completeWorkflowStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing completeWorkflowStmt: %w", cerr)
+		}
+	}
+	if q.completeWorkflowStepStmt != nil {
+		if cerr := q.completeWorkflowStepStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing completeWorkflowStepStmt: %w", cerr)
+		}
+	}
 	if q.createFileStmt != nil {
 		if cerr := q.createFileStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing createFileStmt: %w", cerr)
@@ -99,6 +172,16 @@ func (q *Queries) Close() error {
 	if q.createSessionStmt != nil {
 		if cerr := q.createSessionStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing createSessionStmt: %w", cerr)
+		}
+	}
+	if q.createWorkflowStmt != nil {
+		if cerr := q.createWorkflowStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing createWorkflowStmt: %w", cerr)
+		}
+	}
+	if q.createWorkflowStepStmt != nil {
+		if cerr := q.createWorkflowStepStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing createWorkflowStepStmt: %w", cerr)
 		}
 	}
 	if q.deleteFileStmt != nil {
@@ -126,6 +209,26 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing deleteSessionMessagesStmt: %w", cerr)
 		}
 	}
+	if q.deleteWorkflowStmt != nil {
+		if cerr := q.deleteWorkflowStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteWorkflowStmt: %w", cerr)
+		}
+	}
+	if q.deleteWorkflowStepsStmt != nil {
+		if cerr := q.deleteWorkflowStepsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteWorkflowStepsStmt: %w", cerr)
+		}
+	}
+	if q.failWorkflowStepStmt != nil {
+		if cerr := q.failWorkflowStepStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing failWorkflowStepStmt: %w", cerr)
+		}
+	}
+	if q.getCurrentWorkflowStepStmt != nil {
+		if cerr := q.getCurrentWorkflowStepStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getCurrentWorkflowStepStmt: %w", cerr)
+		}
+	}
 	if q.getFileStmt != nil {
 		if cerr := q.getFileStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getFileStmt: %w", cerr)
@@ -144,6 +247,21 @@ func (q *Queries) Close() error {
 	if q.getSessionByIDStmt != nil {
 		if cerr := q.getSessionByIDStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getSessionByIDStmt: %w", cerr)
+		}
+	}
+	if q.getWorkflowByIDStmt != nil {
+		if cerr := q.getWorkflowByIDStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getWorkflowByIDStmt: %w", cerr)
+		}
+	}
+	if q.getWorkflowStepByIDStmt != nil {
+		if cerr := q.getWorkflowStepByIDStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getWorkflowStepByIDStmt: %w", cerr)
+		}
+	}
+	if q.incrementStepRetryStmt != nil {
+		if cerr := q.incrementStepRetryStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing incrementStepRetryStmt: %w", cerr)
 		}
 	}
 	if q.listFilesByPathStmt != nil {
@@ -171,6 +289,41 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listSessionsStmt: %w", cerr)
 		}
 	}
+	if q.listWorkflowStepsStmt != nil {
+		if cerr := q.listWorkflowStepsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listWorkflowStepsStmt: %w", cerr)
+		}
+	}
+	if q.listWorkflowsStmt != nil {
+		if cerr := q.listWorkflowsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listWorkflowsStmt: %w", cerr)
+		}
+	}
+	if q.listWorkflowsBySessionStmt != nil {
+		if cerr := q.listWorkflowsBySessionStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listWorkflowsBySessionStmt: %w", cerr)
+		}
+	}
+	if q.listWorkflowsByStateStmt != nil {
+		if cerr := q.listWorkflowsByStateStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listWorkflowsByStateStmt: %w", cerr)
+		}
+	}
+	if q.setStepAgentSessionStmt != nil {
+		if cerr := q.setStepAgentSessionStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing setStepAgentSessionStmt: %w", cerr)
+		}
+	}
+	if q.setStepApprovalStatusStmt != nil {
+		if cerr := q.setStepApprovalStatusStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing setStepApprovalStatusStmt: %w", cerr)
+		}
+	}
+	if q.startWorkflowStepStmt != nil {
+		if cerr := q.startWorkflowStepStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing startWorkflowStepStmt: %w", cerr)
+		}
+	}
 	if q.updateMessageStmt != nil {
 		if cerr := q.updateMessageStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing updateMessageStmt: %w", cerr)
@@ -179,6 +332,21 @@ func (q *Queries) Close() error {
 	if q.updateSessionStmt != nil {
 		if cerr := q.updateSessionStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing updateSessionStmt: %w", cerr)
+		}
+	}
+	if q.updateWorkflowStateStmt != nil {
+		if cerr := q.updateWorkflowStateStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing updateWorkflowStateStmt: %w", cerr)
+		}
+	}
+	if q.updateWorkflowStepStmt != nil {
+		if cerr := q.updateWorkflowStepStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing updateWorkflowStepStmt: %w", cerr)
+		}
+	}
+	if q.updateWorkflowStepStatusStmt != nil {
+		if cerr := q.updateWorkflowStepStatusStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing updateWorkflowStepStatusStmt: %w", cerr)
 		}
 	}
 	return err
@@ -218,51 +386,93 @@ func (q *Queries) queryRow(ctx context.Context, stmt *sql.Stmt, query string, ar
 }
 
 type Queries struct {
-	db                          DBTX
-	tx                          *sql.Tx
-	createFileStmt              *sql.Stmt
-	createMessageStmt           *sql.Stmt
-	createSessionStmt           *sql.Stmt
-	deleteFileStmt              *sql.Stmt
-	deleteMessageStmt           *sql.Stmt
-	deleteSessionStmt           *sql.Stmt
-	deleteSessionFilesStmt      *sql.Stmt
-	deleteSessionMessagesStmt   *sql.Stmt
-	getFileStmt                 *sql.Stmt
-	getFileByPathAndSessionStmt *sql.Stmt
-	getMessageStmt              *sql.Stmt
-	getSessionByIDStmt          *sql.Stmt
-	listFilesByPathStmt         *sql.Stmt
-	listFilesBySessionStmt      *sql.Stmt
-	listLatestSessionFilesStmt  *sql.Stmt
-	listMessagesBySessionStmt   *sql.Stmt
-	listSessionsStmt            *sql.Stmt
-	updateMessageStmt           *sql.Stmt
-	updateSessionStmt           *sql.Stmt
+	db                           DBTX
+	tx                           *sql.Tx
+	completeWorkflowStmt         *sql.Stmt
+	completeWorkflowStepStmt     *sql.Stmt
+	createFileStmt               *sql.Stmt
+	createMessageStmt            *sql.Stmt
+	createSessionStmt            *sql.Stmt
+	createWorkflowStmt           *sql.Stmt
+	createWorkflowStepStmt       *sql.Stmt
+	deleteFileStmt               *sql.Stmt
+	deleteMessageStmt            *sql.Stmt
+	deleteSessionStmt            *sql.Stmt
+	deleteSessionFilesStmt       *sql.Stmt
+	deleteSessionMessagesStmt    *sql.Stmt
+	deleteWorkflowStmt           *sql.Stmt
+	deleteWorkflowStepsStmt      *sql.Stmt
+	failWorkflowStepStmt         *sql.Stmt
+	getCurrentWorkflowStepStmt   *sql.Stmt
+	getFileStmt                  *sql.Stmt
+	getFileByPathAndSessionStmt  *sql.Stmt
+	getMessageStmt               *sql.Stmt
+	getSessionByIDStmt           *sql.Stmt
+	getWorkflowByIDStmt          *sql.Stmt
+	getWorkflowStepByIDStmt      *sql.Stmt
+	incrementStepRetryStmt       *sql.Stmt
+	listFilesByPathStmt          *sql.Stmt
+	listFilesBySessionStmt       *sql.Stmt
+	listLatestSessionFilesStmt   *sql.Stmt
+	listMessagesBySessionStmt    *sql.Stmt
+	listSessionsStmt             *sql.Stmt
+	listWorkflowStepsStmt        *sql.Stmt
+	listWorkflowsStmt            *sql.Stmt
+	listWorkflowsBySessionStmt   *sql.Stmt
+	listWorkflowsByStateStmt     *sql.Stmt
+	setStepAgentSessionStmt      *sql.Stmt
+	setStepApprovalStatusStmt    *sql.Stmt
+	startWorkflowStepStmt        *sql.Stmt
+	updateMessageStmt            *sql.Stmt
+	updateSessionStmt            *sql.Stmt
+	updateWorkflowStateStmt      *sql.Stmt
+	updateWorkflowStepStmt       *sql.Stmt
+	updateWorkflowStepStatusStmt *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
-		db:                          tx,
-		tx:                          tx,
-		createFileStmt:              q.createFileStmt,
-		createMessageStmt:           q.createMessageStmt,
-		createSessionStmt:           q.createSessionStmt,
-		deleteFileStmt:              q.deleteFileStmt,
-		deleteMessageStmt:           q.deleteMessageStmt,
-		deleteSessionStmt:           q.deleteSessionStmt,
-		deleteSessionFilesStmt:      q.deleteSessionFilesStmt,
-		deleteSessionMessagesStmt:   q.deleteSessionMessagesStmt,
-		getFileStmt:                 q.getFileStmt,
-		getFileByPathAndSessionStmt: q.getFileByPathAndSessionStmt,
-		getMessageStmt:              q.getMessageStmt,
-		getSessionByIDStmt:          q.getSessionByIDStmt,
-		listFilesByPathStmt:         q.listFilesByPathStmt,
-		listFilesBySessionStmt:      q.listFilesBySessionStmt,
-		listLatestSessionFilesStmt:  q.listLatestSessionFilesStmt,
-		listMessagesBySessionStmt:   q.listMessagesBySessionStmt,
-		listSessionsStmt:            q.listSessionsStmt,
-		updateMessageStmt:           q.updateMessageStmt,
-		updateSessionStmt:           q.updateSessionStmt,
+		db:                           tx,
+		tx:                           tx,
+		completeWorkflowStmt:         q.completeWorkflowStmt,
+		completeWorkflowStepStmt:     q.completeWorkflowStepStmt,
+		createFileStmt:               q.createFileStmt,
+		createMessageStmt:            q.createMessageStmt,
+		createSessionStmt:            q.createSessionStmt,
+		createWorkflowStmt:           q.createWorkflowStmt,
+		createWorkflowStepStmt:       q.createWorkflowStepStmt,
+		deleteFileStmt:               q.deleteFileStmt,
+		deleteMessageStmt:            q.deleteMessageStmt,
+		deleteSessionStmt:            q.deleteSessionStmt,
+		deleteSessionFilesStmt:       q.deleteSessionFilesStmt,
+		deleteSessionMessagesStmt:    q.deleteSessionMessagesStmt,
+		deleteWorkflowStmt:           q.deleteWorkflowStmt,
+		deleteWorkflowStepsStmt:      q.deleteWorkflowStepsStmt,
+		failWorkflowStepStmt:         q.failWorkflowStepStmt,
+		getCurrentWorkflowStepStmt:   q.getCurrentWorkflowStepStmt,
+		getFileStmt:                  q.getFileStmt,
+		getFileByPathAndSessionStmt:  q.getFileByPathAndSessionStmt,
+		getMessageStmt:               q.getMessageStmt,
+		getSessionByIDStmt:           q.getSessionByIDStmt,
+		getWorkflowByIDStmt:          q.getWorkflowByIDStmt,
+		getWorkflowStepByIDStmt:      q.getWorkflowStepByIDStmt,
+		incrementStepRetryStmt:       q.incrementStepRetryStmt,
+		listFilesByPathStmt:          q.listFilesByPathStmt,
+		listFilesBySessionStmt:       q.listFilesBySessionStmt,
+		listLatestSessionFilesStmt:   q.listLatestSessionFilesStmt,
+		listMessagesBySessionStmt:    q.listMessagesBySessionStmt,
+		listSessionsStmt:             q.listSessionsStmt,
+		listWorkflowStepsStmt:        q.listWorkflowStepsStmt,
+		listWorkflowsStmt:            q.listWorkflowsStmt,
+		listWorkflowsBySessionStmt:   q.listWorkflowsBySessionStmt,
+		listWorkflowsByStateStmt:     q.listWorkflowsByStateStmt,
+		setStepAgentSessionStmt:      q.setStepAgentSessionStmt,
+		setStepApprovalStatusStmt:    q.setStepApprovalStatusStmt,
+		startWorkflowStepStmt:        q.startWorkflowStepStmt,
+		updateMessageStmt:            q.updateMessageStmt,
+		updateSessionStmt:            q.updateSessionStmt,
+		updateWorkflowStateStmt:      q.updateWorkflowStateStmt,
+		updateWorkflowStepStmt:       q.updateWorkflowStepStmt,
+		updateWorkflowStepStatusStmt: q.updateWorkflowStepStatusStmt,
 	}
 }
