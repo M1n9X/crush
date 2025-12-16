@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,7 +20,9 @@ import (
 	"github.com/charmbracelet/crush/internal/env"
 	"github.com/charmbracelet/crush/internal/oauth"
 	"github.com/charmbracelet/crush/internal/oauth/claude"
+	"github.com/charmbracelet/crush/internal/oauth/copilot"
 	"github.com/invopop/jsonschema"
+	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
 
@@ -166,6 +169,10 @@ func (pc *ProviderConfig) SetupClaudeCode() {
 		value += want
 	}
 	pc.ExtraHeaders["anthropic-beta"] = value
+}
+
+func (pc *ProviderConfig) SetupGitHubCopilot() {
+	maps.Copy(pc.ExtraHeaders, copilot.Headers())
 }
 
 type MCPType string
@@ -518,6 +525,14 @@ func (c *Config) UpdatePreferredModel(modelType SelectedModelType, model Selecte
 	return nil
 }
 
+func (c *Config) HasConfigField(key string) bool {
+	data, err := os.ReadFile(c.dataConfigDir)
+	if err != nil {
+		return false
+	}
+	return gjson.Get(string(data), key).Exists()
+}
+
 func (c *Config) SetConfigField(key string, value any) error {
 	// read the data
 	data, err := os.ReadFile(c.dataConfigDir)
@@ -549,14 +564,20 @@ func (c *Config) RefreshOAuthToken(ctx context.Context, providerID string) error
 		return fmt.Errorf("provider %s does not have an OAuth token", providerID)
 	}
 
-	// Only Anthropic provider uses OAuth for now
-	if providerID != string(catwalk.InferenceProviderAnthropic) {
+	var (
+		newToken   *oauth.Token
+		refreshErr error
+	)
+	switch providerID {
+	case string(catwalk.InferenceProviderAnthropic):
+		newToken, refreshErr = claude.RefreshToken(ctx, providerConfig.OAuthToken.RefreshToken)
+	case string(catwalk.InferenceProviderCopilot):
+		newToken, refreshErr = copilot.RefreshToken(ctx, providerConfig.OAuthToken.RefreshToken)
+	default:
 		return fmt.Errorf("OAuth refresh not supported for provider %s", providerID)
 	}
-
-	newToken, err := claude.RefreshToken(ctx, providerConfig.OAuthToken.RefreshToken)
-	if err != nil {
-		return fmt.Errorf("failed to refresh OAuth token for provider %s: %w", providerID, err)
+	if refreshErr != nil {
+		return fmt.Errorf("failed to refresh OAuth token for provider %s: %w", providerID, refreshErr)
 	}
 
 	slog.Info("Successfully refreshed OAuth token in background", "provider", providerID)

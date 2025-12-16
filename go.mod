@@ -18,10 +18,10 @@ require (
 	github.com/atotto/clipboard v0.1.4
 	github.com/aymanbagabas/go-udiff v0.3.1
 	github.com/bmatcuk/doublestar/v4 v4.9.1
-	github.com/charlievieth/fastwalk v1.0.14
-	github.com/charmbracelet/catwalk v0.8.2
-	github.com/charmbracelet/colorprofile v0.3.3
-	github.com/charmbracelet/fang v0.4.4
+github.com/charlievieth/fastwalk v1.0.14
+github.com/charmbracelet/catwalk v0.11.0
+github.com/charmbracelet/colorprofile v0.4.1
+github.com/charmbracelet/fang v0.4.4
 	github.com/charmbracelet/glamour/v2 v2.0.0-20251106195642-800eb8175930
 	github.com/charmbracelet/log/v2 v2.0.0-20251106192421-eb64aaa963a0
 	github.com/charmbracelet/ultraviolet v0.0.0-20251202162030-ecc8c1ae4b2b
@@ -56,6 +56,7 @@ require (
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef
 	github.com/stretchr/testify v1.11.1
+	github.com/tidwall/gjson v1.18.0
 	github.com/tidwall/sjson v1.2.5
 	github.com/zeebo/xxh3 v1.0.2
 	golang.org/x/net v0.47.0
@@ -142,15 +143,15 @@ require (
 	github.com/ncruces/julianday v1.0.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.22 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/sergi/go-diff v1.3.2-0.20230802210424-5b0b94c5c0d3 // indirect
-	github.com/sethvargo/go-retry v0.3.0 // indirect
-	github.com/sourcegraph/jsonrpc2 v0.2.1 // indirect
-	github.com/spf13/pflag v1.0.9 // indirect
-	github.com/tetratelabs/wazero v1.10.0 // indirect
-	github.com/tidwall/gjson v1.18.0 // indirect
-	github.com/tidwall/match v1.1.1 // indirect
-	github.com/tidwall/pretty v1.2.1 // indirect
-	github.com/u-root/u-root v0.14.1-0.20250807200646-5e7721023dc7 // indirect
+github.com/sergi/go-diff v1.3.2-0.20230802210424-5b0b94c5c0d3 // indirect
+github.com/sethvargo/go-retry v0.3.0 // indirect
+github.com/sourcegraph/jsonrpc2 v0.2.1 // indirect
+github.com/spf13/pflag v1.0.9 // indirect
+github.com/tetratelabs/wazero v1.10.1 // indirect
+github.com/tidwall/gjson v1.18.0 // indirect
+github.com/tidwall/match v1.1.1 // indirect
+github.com/tidwall/pretty v1.2.1 // indirect
+github.com/u-root/u-root v0.14.1-0.20250807200646-5e7721023dc7 // indirect
 	github.com/u-root/uio v0.0.0-20240224005618-d2acac8f3701 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
