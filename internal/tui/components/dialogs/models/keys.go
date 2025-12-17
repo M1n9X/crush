@@ -15,7 +15,11 @@ type KeyMap struct {
 	isAPIKeyHelp  bool
 	isAPIKeyValid bool
 
-	isClaudeAuthChoiseHelp    bool
+	isHyperDeviceFlow    bool
+	isCopilotDeviceFlow  bool
+	isCopilotUnavailable bool
+
+	isClaudeAuthChoiceHelp    bool
 	isClaudeOAuthHelp         bool
 	isClaudeOAuthURLState     bool
 	isClaudeOAuthHelpComplete bool
@@ -74,7 +78,29 @@ func (k KeyMap) FullHelp() [][]key.Binding {
 
 // ShortHelp implements help.KeyMap.
 func (k KeyMap) ShortHelp() []key.Binding {
-	if k.isClaudeAuthChoiseHelp {
+	if k.isHyperDeviceFlow || k.isCopilotDeviceFlow {
+		return []key.Binding{
+			key.NewBinding(
+				key.WithKeys("c"),
+				key.WithHelp("c", "copy code"),
+			),
+			key.NewBinding(
+				key.WithKeys("enter"),
+				key.WithHelp("enter", "copy & open"),
+			),
+			k.Close,
+		}
+	}
+	if k.isCopilotUnavailable {
+		return []key.Binding{
+			key.NewBinding(
+				key.WithKeys("enter"),
+				key.WithHelp("enter", "open signup"),
+			),
+			k.Close,
+		}
+	}
+	if k.isClaudeAuthChoiceHelp {
 		return []key.Binding{
 			key.NewBinding(
 				key.WithKeys("left", "right", "h", "l"),
