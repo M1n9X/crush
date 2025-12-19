@@ -294,7 +294,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	var currentAssistant *message.Message
 	var shouldSummarize bool
 	result, err := agent.Stream(genCtx, fantasy.AgentStreamCall{
-		Prompt:           call.Prompt,
+		Prompt:           message.PromptWithTextAttachments(call.Prompt, call.Attachments),
 		Files:            files,
 		Messages:         history,
 		ProviderOptions:  call.ProviderOptions,
@@ -1106,11 +1106,11 @@ func (a *sessionAgent) currentSystemPrompt() string {
 }
 
 func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentCall) (message.Message, error) {
+	parts := []message.ContentPart{message.TextContent{Text: call.Prompt}}
 	var attachmentParts []message.ContentPart
 	for _, attachment := range call.Attachments {
 		attachmentParts = append(attachmentParts, message.BinaryContent{Path: attachment.FilePath, MIMEType: attachment.MimeType, Data: attachment.Content})
 	}
-	parts := []message.ContentPart{message.TextContent{Text: call.Prompt}}
 	parts = append(parts, attachmentParts...)
 	msg, err := a.messages.Create(ctx, call.SessionID, message.CreateMessageParams{
 		Role:  message.User,
@@ -1142,6 +1142,9 @@ func (a *sessionAgent) preparePrompt(msgs []message.Message, attachments ...mess
 
 	var files []fantasy.FilePart
 	for _, attachment := range attachments {
+		if attachment.IsText() {
+			continue
+		}
 		files = append(files, fantasy.FilePart{
 			Filename:  attachment.FileName,
 			Data:      attachment.Content,
