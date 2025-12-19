@@ -54,6 +54,7 @@ type Querier interface {
 	StartWorkflowStep(ctx context.Context, id string) (WorkflowStep, error)
 	UpdateMessage(ctx context.Context, arg UpdateMessageParams) error
 	UpdateSession(ctx context.Context, arg UpdateSessionParams) (Session, error)
+	UpdateSessionTitleAndUsage(ctx context.Context, arg UpdateSessionTitleAndUsageParams) error
 	UpdateWorkflowCurrentNode(ctx context.Context, arg UpdateWorkflowCurrentNodeParams) (Workflow, error)
 	UpdateWorkflowState(ctx context.Context, arg UpdateWorkflowStateParams) (Workflow, error)
 	UpdateWorkflowStep(ctx context.Context, arg UpdateWorkflowStepParams) (Workflow, error)

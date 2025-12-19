@@ -153,6 +153,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.updateSessionStmt, err = db.PrepareContext(ctx, updateSession); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateSession: %w", err)
 	}
+	if q.updateSessionTitleAndUsageStmt, err = db.PrepareContext(ctx, updateSessionTitleAndUsage); err != nil {
+		return nil, fmt.Errorf("error preparing query UpdateSessionTitleAndUsage: %w", err)
+	}
 	if q.updateWorkflowCurrentNodeStmt, err = db.PrepareContext(ctx, updateWorkflowCurrentNode); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateWorkflowCurrentNode: %w", err)
 	}
@@ -385,6 +388,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing updateSessionStmt: %w", cerr)
 		}
 	}
+	if q.updateSessionTitleAndUsageStmt != nil {
+		if cerr := q.updateSessionTitleAndUsageStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing updateSessionTitleAndUsageStmt: %w", cerr)
+		}
+	}
 	if q.updateWorkflowCurrentNodeStmt != nil {
 		if cerr := q.updateWorkflowCurrentNodeStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing updateWorkflowCurrentNodeStmt: %w", cerr)
@@ -487,6 +495,7 @@ type Queries struct {
 	startWorkflowStepStmt          *sql.Stmt
 	updateMessageStmt              *sql.Stmt
 	updateSessionStmt              *sql.Stmt
+	updateSessionTitleAndUsageStmt *sql.Stmt
 	updateWorkflowCurrentNodeStmt  *sql.Stmt
 	updateWorkflowStateStmt        *sql.Stmt
 	updateWorkflowStepStmt         *sql.Stmt
@@ -540,6 +549,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		startWorkflowStepStmt:          q.startWorkflowStepStmt,
 		updateMessageStmt:              q.updateMessageStmt,
 		updateSessionStmt:              q.updateSessionStmt,
+		updateSessionTitleAndUsageStmt: q.updateSessionTitleAndUsageStmt,
 		updateWorkflowCurrentNodeStmt:  q.updateWorkflowCurrentNodeStmt,
 		updateWorkflowStateStmt:        q.updateWorkflowStateStmt,
 		updateWorkflowStepStmt:         q.updateWorkflowStepStmt,
