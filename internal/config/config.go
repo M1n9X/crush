@@ -561,8 +561,14 @@ func (c *Config) RefreshOAuthToken(ctx context.Context, providerID string) error
 
 	slog.Info("Successfully refreshed OAuth token in background", "provider", providerID)
 	providerConfig.OAuthToken = newToken
-	providerConfig.APIKey = fmt.Sprintf("Bearer %s", newToken.AccessToken)
-	providerConfig.SetupClaudeCode()
+	providerConfig.APIKey = newToken.AccessToken
+
+	switch providerID {
+	case string(catwalk.InferenceProviderAnthropic):
+		providerConfig.SetupClaudeCode()
+	case string(catwalk.InferenceProviderCopilot):
+		providerConfig.SetupGitHubCopilot()
+	}
 
 	c.Providers.Set(providerID, providerConfig)
 
@@ -597,7 +603,12 @@ func (c *Config) SetProviderAPIKey(providerID string, apiKey any) error {
 		setKeyOrToken = func() {
 			providerConfig.APIKey = v.AccessToken
 			providerConfig.OAuthToken = v
-			providerConfig.SetupClaudeCode()
+			switch providerID {
+			case string(catwalk.InferenceProviderAnthropic):
+				providerConfig.SetupClaudeCode()
+			case string(catwalk.InferenceProviderCopilot):
+				providerConfig.SetupGitHubCopilot()
+			}
 		}
 	}
 
