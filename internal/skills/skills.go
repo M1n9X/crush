@@ -1,250 +1,164 @@
+// Package skills implements the Agent Skills open standard.
+// See https://agentskills.io for the specification.
 package skills
 
 import (
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
+	"regexp"
 	"strings"
 
-	"github.com/charmbracelet/crush/internal/config"
-	"github.com/charmbracelet/crush/internal/fsext"
-	"github.com/charmbracelet/crush/internal/home"
 	"gopkg.in/yaml.v3"
 )
 
 const (
-	skillFileName = "SKILL.md"
-	maxNameLength = 100
-	maxDescLength = 500
-	skillsDirName = "skills"
-	configDirName = ".crush"
+	SkillFileName          = "SKILL.md"
+	MaxNameLength          = 64
+	MaxDescriptionLength   = 1024
+	MaxCompatibilityLength = 500
 )
 
-// Skill represents validated metadata loaded from a SKILL.md file.
+var namePattern = regexp.MustCompile(`^[a-zA-Z0-9]+(-[a-zA-Z0-9]+)*$`)
+
+// Skill represents a parsed SKILL.md file.
 type Skill struct {
-	Name        string
-	Description string
-	Path        string
+	Name          string            `yaml:"name" json:"name"`
+	Description   string            `yaml:"description" json:"description"`
+	License       string            `yaml:"license,omitempty" json:"license,omitempty"`
+	Compatibility string            `yaml:"compatibility,omitempty" json:"compatibility,omitempty"`
+	Metadata      map[string]string `yaml:"metadata,omitempty" json:"metadata,omitempty"`
+	Instructions  string            `yaml:"-" json:"instructions"`
+	Path          string            `yaml:"-" json:"path"`
+	SkillFilePath string            `yaml:"-" json:"skill_file_path"`
 }
 
-// Error captures a problem encountered while loading a skill file.
-type Error struct {
-	Path string
-	Err  error
-}
+// Validate checks if the skill meets spec requirements.
+func (s *Skill) Validate() error {
+	var errs []error
 
-// Result bundles discovered skills and any errors.
-type Result struct {
-	Skills []Skill
-	Errors []Error
-	Roots  []string
-}
-
-// Load discovers and validates SKILL.md files under configured roots. Only
-// frontmatter name/description are injected; bodies stay on disk.
-func Load(cfg *config.Config) Result {
-	var result Result
-
-	roots := skillRoots(cfg)
-	seenRoots := map[string]struct{}{}
-	for _, root := range roots {
-		root = filepath.Clean(root)
-		if root == "" {
-			continue
+	if s.Name == "" {
+		errs = append(errs, errors.New("name is required"))
+	} else {
+		if len(s.Name) > MaxNameLength {
+			errs = append(errs, fmt.Errorf("name exceeds %d characters", MaxNameLength))
 		}
-		if _, ok := seenRoots[root]; ok {
-			continue
+		if !namePattern.MatchString(s.Name) {
+			errs = append(errs, errors.New("name must be alphanumeric with hyphens, no leading/trailing/consecutive hyphens"))
 		}
-		seenRoots[root] = struct{}{}
-		result.Roots = append(result.Roots, root)
-		walkSkills(root, &result)
+		if s.Path != "" && !strings.EqualFold(filepath.Base(s.Path), s.Name) {
+			errs = append(errs, fmt.Errorf("name %q must match directory %q", s.Name, filepath.Base(s.Path)))
+		}
 	}
 
-	slices.SortFunc(result.Skills, func(a, b Skill) int {
-		return cmpStrings(a.Name, b.Name, a.Path, b.Path)
-	})
+	if s.Description == "" {
+		errs = append(errs, errors.New("description is required"))
+	} else if len(s.Description) > MaxDescriptionLength {
+		errs = append(errs, fmt.Errorf("description exceeds %d characters", MaxDescriptionLength))
+	}
 
-	return result
+	if len(s.Compatibility) > MaxCompatibilityLength {
+		errs = append(errs, fmt.Errorf("compatibility exceeds %d characters", MaxCompatibilityLength))
+	}
+
+	return errors.Join(errs...)
 }
 
-// RenderSummary returns a compact textual summary of discovered skills. If no
-// skills are present, an empty string is returned.
-func RenderSummary(skills []Skill, roots []string) string {
+// Parse parses a SKILL.md file.
+func Parse(path string) (*Skill, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	frontmatter, body, err := splitFrontmatter(string(content))
+	if err != nil {
+		return nil, err
+	}
+
+	var skill Skill
+	if err := yaml.Unmarshal([]byte(frontmatter), &skill); err != nil {
+		return nil, fmt.Errorf("parsing frontmatter: %w", err)
+	}
+
+	skill.Instructions = strings.TrimSpace(body)
+	skill.Path = filepath.Dir(path)
+	skill.SkillFilePath = path
+
+	return &skill, nil
+}
+
+// splitFrontmatter extracts YAML frontmatter and body from markdown content.
+func splitFrontmatter(content string) (frontmatter, body string, err error) {
+	// Normalize line endings to \n for consistent parsing.
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	if !strings.HasPrefix(content, "---\n") {
+		return "", "", errors.New("no YAML frontmatter found")
+	}
+
+	rest := strings.TrimPrefix(content, "---\n")
+	before, after, ok := strings.Cut(rest, "\n---")
+	if !ok {
+		return "", "", errors.New("unclosed frontmatter")
+	}
+
+	return before, after, nil
+}
+
+// Discover finds all valid skills in the given paths.
+func Discover(paths []string) []*Skill {
+	var skills []*Skill
+	seen := make(map[string]bool)
+
+	for _, base := range paths {
+		filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if d.IsDir() || d.Name() != SkillFileName || seen[path] {
+				return nil
+			}
+			seen[path] = true
+			skill, err := Parse(path)
+			if err != nil {
+				slog.Warn("Failed to parse skill file", "path", path, "error", err)
+				return nil
+			}
+			if err := skill.Validate(); err != nil {
+				slog.Warn("Skill validation failed", "path", path, "error", err)
+				return nil
+			}
+			slog.Info("Successfully loaded skill", "name", skill.Name, "path", path)
+			skills = append(skills, skill)
+			return nil
+		})
+	}
+
+	return skills
+}
+
+// ToPromptXML generates XML for injection into the system prompt.
+func ToPromptXML(skills []*Skill) string {
 	if len(skills) == 0 {
 		return ""
 	}
 
-	var lines []string
-	lines = append(lines, "## Skills")
-	if len(roots) > 0 {
-		shortRoots := make([]string, 0, len(roots))
-		for _, root := range roots {
-			shortRoots = append(shortRoots, filepath.ToSlash(home.Short(root)))
-		}
-		lines = append(lines, fmt.Sprintf("Discovered at startup under: %s", strings.Join(shortRoots, ", ")))
+	var sb strings.Builder
+	sb.WriteString("<available_skills>\n")
+	for _, s := range skills {
+		sb.WriteString("  <skill>\n")
+		fmt.Fprintf(&sb, "    <name>%s</name>\n", escape(s.Name))
+		fmt.Fprintf(&sb, "    <description>%s</description>\n", escape(s.Description))
+		fmt.Fprintf(&sb, "    <location>%s</location>\n", escape(s.SkillFilePath))
+		sb.WriteString("  </skill>\n")
 	}
-	lines = append(lines, "Each entry lists the name, description, and file path. Open the source when you decide to use a skill; bodies are kept on disk.")
-
-	for _, skill := range skills {
-		lines = append(lines, fmt.Sprintf("- %s: %s (file: %s)", skill.Name, skill.Description, filepath.ToSlash(skill.Path)))
-	}
-
-	lines = append(lines,
-		"- When a task or user mention matches a skill, open its SKILL.md and follow it.",
-		"- Load only what you need: open referenced files/templates selectively instead of bulk-loading.",
-		"- If a skill path is missing or unreadable, say so briefly and continue with the best fallback.",
-	)
-
-	return strings.Join(lines, "\n")
+	sb.WriteString("</available_skills>")
+	return sb.String()
 }
 
-func skillRoots(cfg *config.Config) []string {
-	var roots []string
-
-	if len(cfg.Options.SkillsDirs) > 0 {
-		for _, dir := range cfg.Options.SkillsDirs {
-			if dir == "" {
-				continue
-			}
-			roots = append(roots, home.Long(dir))
-		}
-	} else {
-		roots = append(roots, filepath.Join(home.Dir(), configDirName, skillsDirName))
-	}
-
-	if repoRoot := fsext.FindGitRoot(cfg.WorkingDir()); repoRoot != "" {
-		roots = append(roots, filepath.Join(repoRoot, configDirName, skillsDirName))
-	} else {
-		roots = append(roots, filepath.Join(cfg.WorkingDir(), configDirName, skillsDirName))
-	}
-
-	return roots
-}
-
-func walkSkills(root string, result *Result) {
-	info, err := os.Stat(root)
-	if err != nil || !info.IsDir() {
-		return
-	}
-
-	filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-
-		name := d.Name()
-		if strings.HasPrefix(name, ".") {
-			if d.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		if d.Type()&os.ModeSymlink != 0 {
-			if d.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		if d.IsDir() {
-			return nil
-		}
-
-		if name != skillFileName {
-			return nil
-		}
-
-		skill, parseErr := parseSkill(path)
-		if parseErr != nil {
-			result.Errors = append(result.Errors, Error{Path: path, Err: parseErr})
-			return nil
-		}
-
-		result.Skills = append(result.Skills, *skill)
-		return nil
-	})
-}
-
-func parseSkill(path string) (*Skill, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read file: %w", err)
-	}
-
-	frontmatter, ok := extractFrontmatter(string(data))
-	if !ok {
-		return nil, fmt.Errorf("missing YAML frontmatter delimited by ---")
-	}
-
-	var meta struct {
-		Name        string `yaml:"name"`
-		Description string `yaml:"description"`
-	}
-	if err := yaml.Unmarshal([]byte(frontmatter), &meta); err != nil {
-		return nil, fmt.Errorf("invalid YAML: %w", err)
-	}
-
-	name := sanitize(meta.Name)
-	desc := sanitize(meta.Description)
-
-	if err := validateField(name, maxNameLength, "name"); err != nil {
-		return nil, err
-	}
-	if err := validateField(desc, maxDescLength, "description"); err != nil {
-		return nil, err
-	}
-
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		abs = path
-	}
-
-	return &Skill{
-		Name:        name,
-		Description: desc,
-		Path:        abs,
-	}, nil
-}
-
-func extractFrontmatter(content string) (string, bool) {
-	lines := strings.Split(content, "\n")
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
-		return "", false
-	}
-	var fm []string
-	foundClosing := false
-	for _, line := range lines[1:] {
-		if strings.TrimSpace(line) == "---" {
-			foundClosing = true
-			break
-		}
-		fm = append(fm, line)
-	}
-	if len(fm) == 0 || !foundClosing {
-		return "", false
-	}
-	return strings.Join(fm, "\n"), true
-}
-
-func sanitize(value string) string {
-	return strings.Join(strings.Fields(value), " ")
-}
-
-func validateField(value string, maxLen int, field string) error {
-	if value == "" {
-		return fmt.Errorf("missing field %s", field)
-	}
-	if len(value) > maxLen {
-		return fmt.Errorf("invalid %s: exceeds %d characters", field, maxLen)
-	}
-	return nil
-}
-
-func cmpStrings(a, b, aPath, bPath string) int {
-	if a == b {
-		return strings.Compare(aPath, bPath)
-	}
-	return strings.Compare(a, b)
+func escape(s string) string {
+	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "\"", "&quot;", "'", "&apos;")
+	return r.Replace(s)
 }

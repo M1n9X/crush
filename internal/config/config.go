@@ -261,6 +261,7 @@ type Options struct {
 	ProjectDocMaxBytes          int          `json:"project_doc_max_bytes,omitempty" jsonschema:"description=Maximum total bytes to read from project instruction files,default=32768,minimum=0"`
 	projectDocMaxBytesSet       bool         `json:"-"`
 	SkillsDirs                  []string     `json:"skills_dirs,omitempty" jsonschema:"description=Roots to search recursively for SKILL.md files,example=~/.crush/skills,example=.crush/skills"`
+	SkillsPaths                 []string     `json:"skills_paths,omitempty" jsonschema:"description=Paths to directories containing Agent Skills (folders with SKILL.md files),example=~/.config/crush/skills,example=./skills"`
 	TUI                         *TUIOptions  `json:"tui,omitempty" jsonschema:"description=Terminal user interface options"`
 	Debug                       bool         `json:"debug,omitempty" jsonschema:"description=Enable debug logging,default=false"`
 	DebugLSP                    bool         `json:"debug_lsp,omitempty" jsonschema:"description=Enable debug logging for LSP servers,default=false"`

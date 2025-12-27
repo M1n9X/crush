@@ -722,7 +722,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 		tools.NewGrepTool(c.cfg.WorkingDir()),
 		tools.NewLsTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Tools.Ls),
 		tools.NewSourcegraphTool(nil),
-		tools.NewViewTool(c.lspClients, c.permissions, c.cfg.WorkingDir()),
+		tools.NewViewTool(c.lspClients, c.permissions, c.cfg.WorkingDir(), c.cfg.Options.SkillsPaths...),
 		tools.NewWriteTool(c.lspClients, c.permissions, c.history, c.cfg.WorkingDir()),
 		tools.NewClaudeCodeTool(c.permissions, c.messages, c.cfg.WorkingDir()),
 		tools.NewMemoryReadTool(agent.ID, c.memory, c.freshness),
