@@ -157,6 +157,9 @@ func (m *modelDialogCmp) Update(msg tea.Msg) (util.Model, tea.Cmd) {
 			return m, nil
 		case key.Matches(msg, m.keyMap.Select):
 			selectedItem := m.modelList.SelectedModel()
+			if selectedItem == nil {
+				return m, nil
+			}
 
 			modelType := config.SelectedModelTypeLarge
 			if m.modelList.GetModelType() == SmallModelType {
