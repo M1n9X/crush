@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -60,6 +61,8 @@ const (
 	maxTokensPerRecoveredFile = 10_000
 	maxTotalRecoveredTokens   = 50_000
 )
+// Used to remove <think> tags from generated titles.
+var thinkTagRegex = regexp.MustCompile(`<think>.*?</think>`)
 
 type SessionAgentCall struct {
 	SessionID        string
@@ -1206,9 +1209,7 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, prom
 	title = strings.ReplaceAll(title, "\n", " ")
 
 	// Remove thinking tags if present.
-	if idx := strings.Index(title, "</think>"); idx > 0 {
-		title = title[idx+len("</think>"):]
-	}
+	title = thinkTagRegex.ReplaceAllString(title, "")
 
 	title = strings.TrimSpace(title)
 	if title == "" {
