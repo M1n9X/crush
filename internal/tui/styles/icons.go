@@ -8,6 +8,8 @@ const (
 	HintIcon     string = "∵"
 	SpinnerIcon  string = "..."
 	LoadingIcon  string = "⟳"
+	ImageIcon    string = "🖼"
+	TextIcon     string = "📄"
 	DocumentIcon string = "🖼"
 	ModelIcon    string = "◇"
 

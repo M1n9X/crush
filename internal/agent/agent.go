@@ -64,6 +64,7 @@ const (
 	maxTokensPerRecoveredFile = 10_000
 	maxTotalRecoveredTokens   = 50_000
 )
+
 // Used to remove <think> tags from generated titles.
 var thinkTagRegex = regexp.MustCompile(`<think>.*?</think>`)
 
@@ -111,6 +112,7 @@ type sessionAgent struct {
 	sessions             session.Service
 	messages             message.Service
 	disableAutoSummarize bool
+	disableTitle         bool
 	isYolo               bool
 	history              history.Service
 	workingDir           string
@@ -134,6 +136,7 @@ type SessionAgentOptions struct {
 	SystemPrompt         string
 	SystemPromptBuilder  func() (string, error)
 	DisableAutoSummarize bool
+	DisableTitle         bool
 	IsYolo               bool
 	Sessions             session.Service
 	Messages             message.Service
@@ -156,6 +159,7 @@ func NewSessionAgent(
 		sessions:             opts.Sessions,
 		messages:             opts.Messages,
 		disableAutoSummarize: opts.DisableAutoSummarize,
+		disableTitle:         opts.DisableTitle,
 		tools:                opts.Tools,
 		isYolo:               opts.IsYolo,
 		history:              opts.History,
@@ -263,8 +267,8 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	}
 
 	var wg sync.WaitGroup
-	// Generate title if first message.
-	if len(msgs) == 0 {
+	// Generate title if first message and titles are enabled.
+	if len(msgs) == 0 && !a.disableTitle {
 		titleCtx := ctx // Copy to avoid race with ctx reassignment below.
 		wg.Go(func() {
 			a.generateTitle(titleCtx, call.SessionID, call.Prompt)

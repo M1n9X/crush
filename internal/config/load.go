@@ -255,7 +255,6 @@ func (c *Config) configureProviders(env env.Env, resolver VariableResolver, know
 				prepared.SetupGitHubCopilot()
 			}
 		}
-		}
 
 		switch p.ID {
 		// Handle specific providers that require additional configuration
@@ -429,6 +428,16 @@ func (c *Config) setDefaults(workingDir, dataDir string) {
 	c.Options.ContextPaths = append(defaultContextPaths, c.Options.ContextPaths...)
 	slices.Sort(c.Options.ContextPaths)
 	c.Options.ContextPaths = slices.Compact(c.Options.ContextPaths)
+
+	// Backward compatibility: merge legacy SkillsDirs into SkillsPaths.
+	for _, p := range c.Options.SkillsDirs {
+		if p == "" {
+			continue
+		}
+		if !slices.Contains(c.Options.SkillsPaths, p) {
+			c.Options.SkillsPaths = append(c.Options.SkillsPaths, p)
+		}
+	}
 
 	// Add the default skills directory if not already present.
 	defaultSkillsDir := GlobalSkillsDir()

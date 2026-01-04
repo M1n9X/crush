@@ -1,6 +1,6 @@
 module github.com/charmbracelet/crush
 
-go 1.25.0
+go 1.25.5
 
 require (
 	charm.land/bubbles/v2 v2.0.0-rc.1
@@ -9,8 +9,8 @@ require (
 	charm.land/lipgloss/v2 v2.0.0-beta.3.0.20251119143523-0334bb4562ca
 	charm.land/x/vcr v0.1.1
 	github.com/JohannesKaufmann/html-to-markdown v1.6.0
-	github.com/M1n9X/codex-sdk-go v0.0.0-20251211161447-966ec1a298f9
 	github.com/M1n9X/claude-agent-sdk-go v0.0.0-20251115144806-282e191bc3ab
+	github.com/M1n9X/codex-sdk-go v0.0.0-20251211161447-966ec1a298f9
 	github.com/MakeNowJust/heredoc v1.0.0
 	github.com/PuerkitoBio/goquery v1.10.3
 	github.com/RealAlexandreAI/json-repair v0.0.14
@@ -18,14 +18,14 @@ require (
 	github.com/atotto/clipboard v0.1.4
 	github.com/aymanbagabas/go-udiff v0.3.1
 	github.com/bmatcuk/doublestar/v4 v4.9.1
-github.com/charlievieth/fastwalk v1.0.14
-github.com/charmbracelet/catwalk v0.11.0
-github.com/charmbracelet/colorprofile v0.4.1
-github.com/charmbracelet/fang v0.4.4
+	github.com/charlievieth/fastwalk v1.0.14
+	github.com/charmbracelet/catwalk v0.11.0
+	github.com/charmbracelet/colorprofile v0.4.1
+	github.com/charmbracelet/fang v0.4.4
 	github.com/charmbracelet/glamour/v2 v2.0.0-20251106195642-800eb8175930
 	github.com/charmbracelet/log/v2 v2.0.0-20251106192421-eb64aaa963a0
 	github.com/charmbracelet/ultraviolet v0.0.0-20251202162030-ecc8c1ae4b2b
-	github.com/charmbracelet/x/ansi v0.11.2
+	github.com/charmbracelet/x/ansi v0.11.3
 	github.com/charmbracelet/x/exp/charmtone v0.0.0-20250708181618-a60a724ba6c3
 	github.com/charmbracelet/x/exp/golden v0.0.0-20250806222409-83e3a29d542f
 	github.com/charmbracelet/x/exp/ordered v0.1.0
@@ -97,10 +97,11 @@ require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.1 // indirect
 	github.com/charmbracelet/anthropic-sdk-go v0.0.0-20251024181547-21d6f3d9a904 // indirect
+	github.com/charmbracelet/x/etag v0.2.0 // indirect
 	github.com/charmbracelet/x/json v0.2.0 // indirect
 	github.com/charmbracelet/x/termios v0.1.1 // indirect
 	github.com/charmbracelet/x/windows v0.2.2 // indirect
-	github.com/clipperhouse/displaywidth v0.6.0 // indirect
+	github.com/clipperhouse/displaywidth v0.6.1 // indirect
 	github.com/clipperhouse/stringish v0.1.1 // indirect
 	github.com/clipperhouse/uax29/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
@@ -144,15 +145,14 @@ require (
 	github.com/ncruces/julianday v1.0.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.22 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-github.com/sergi/go-diff v1.3.2-0.20230802210424-5b0b94c5c0d3 // indirect
-github.com/sethvargo/go-retry v0.3.0 // indirect
-github.com/sourcegraph/jsonrpc2 v0.2.1 // indirect
-github.com/spf13/pflag v1.0.9 // indirect
-github.com/tetratelabs/wazero v1.10.1 // indirect
-github.com/tidwall/gjson v1.18.0 // indirect
-github.com/tidwall/match v1.1.1 // indirect
-github.com/tidwall/pretty v1.2.1 // indirect
-github.com/u-root/u-root v0.14.1-0.20250807200646-5e7721023dc7 // indirect
+	github.com/sergi/go-diff v1.3.2-0.20230802210424-5b0b94c5c0d3 // indirect
+	github.com/sethvargo/go-retry v0.3.0 // indirect
+	github.com/sourcegraph/jsonrpc2 v0.2.1 // indirect
+	github.com/spf13/pflag v1.0.9 // indirect
+	github.com/tetratelabs/wazero v1.10.1 // indirect
+	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/pretty v1.2.1 // indirect
+	github.com/u-root/u-root v0.14.1-0.20250807200646-5e7721023dc7 // indirect
 	github.com/u-root/uio v0.0.0-20240224005618-d2acac8f3701 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
@@ -183,3 +183,5 @@ github.com/u-root/u-root v0.14.1-0.20250807200646-5e7721023dc7 // indirect
 )
 
 replace github.com/M1n9X/codex-sdk-go => ../CODEX-SDK-GO/codex-sdk-go
+
+replace charm.land/x/vcr => ./internal/vcr

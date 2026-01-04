@@ -155,6 +155,7 @@ func testSessionAgent(env fakeEnv, large, small fantasy.LanguageModel, systemPro
 		SystemPromptPrefix:   "",
 		SystemPrompt:         systemPrompt,
 		DisableAutoSummarize: false,
+		DisableTitle:         true,
 		IsYolo:               true,
 		Sessions:             env.sessions,
 		Messages:             env.messages,

@@ -2,6 +2,7 @@ package config
 
 import (
 	"cmp"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -17,7 +18,7 @@ import (
 )
 
 type ProviderClient interface {
-	GetProviders() ([]catwalk.Provider, error)
+	GetProviders(ctx context.Context, etag string) ([]catwalk.Provider, error)
 }
 
 var (
@@ -86,7 +87,7 @@ func UpdateProviders(pathOrUrl string) error {
 		providers = embedded.GetAll()
 	case strings.HasPrefix(pathOrUrl, "http://") || strings.HasPrefix(pathOrUrl, "https://"):
 		var err error
-		providers, err = catwalk.NewWithURL(pathOrUrl).GetProviders()
+		providers, err = catwalk.NewWithURL(pathOrUrl).GetProviders(context.Background(), "")
 		if err != nil {
 			return fmt.Errorf("failed to fetch providers from Catwalk: %w", err)
 		}
@@ -126,7 +127,7 @@ func Providers(cfg *Config) ([]catwalk.Provider, error) {
 
 func loadProviders(autoUpdateDisabled bool, client ProviderClient, path string) ([]catwalk.Provider, error) {
 	catwalkGetAndSave := func() ([]catwalk.Provider, error) {
-		providers, err := client.GetProviders()
+		providers, err := client.GetProviders(context.Background(), "")
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch providers from catwalk: %w", err)
 		}

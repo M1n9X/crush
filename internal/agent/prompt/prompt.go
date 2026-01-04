@@ -202,18 +202,6 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, cfg con
 	}
 
 	// Reusable skills summary.
-	if result := skills.Load(&cfg); len(result.Skills) > 0 || len(result.Errors) > 0 {
-		for _, err := range result.Errors {
-			slog.Warn("skill load error", "path", err.Path, "error", err.Err)
-		}
-		if summary := skills.RenderSummary(result.Skills, result.Roots); summary != "" {
-			addContexts([]ContextFile{{
-				Path:    "skills-summary",
-				Content: summary,
-			}})
-		}
-	}
-
 	for _, pth := range cfg.Options.ContextPaths {
 		addContexts(processContextPath(expandPath(pth, cfg), cfg))
 	}

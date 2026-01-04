@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"net/http"
 	"os"
 	"slices"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	codexsdk "github.com/M1n9X/codex-sdk-go"
 	"github.com/charmbracelet/catwalk/pkg/catwalk"
 	"github.com/charmbracelet/crush/internal/agent/capability"
+	"github.com/charmbracelet/crush/internal/agent/hyper"
 	"github.com/charmbracelet/crush/internal/agent/prompt"
 	"github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/config"
@@ -997,6 +999,10 @@ func (c *coordinator) buildOpenaiCompatProvider(baseURL, apiKey string, headers 
 	}
 
 	return openaicompat.New(opts...)
+}
+
+func (c *coordinator) buildHyperProvider(_, _ string) (fantasy.Provider, error) {
+	return nil, fmt.Errorf("hyper provider not supported in this build")
 }
 
 func (c *coordinator) buildAzureProvider(baseURL, apiKey string, headers map[string]string, options map[string]string) (fantasy.Provider, error) {

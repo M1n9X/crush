@@ -26,11 +26,8 @@ var loginCmd = &cobra.Command{
 	Short:   "Login Crush to a platform",
 	Long: `Login Crush to a specified platform.
 The platform should be provided as an argument.
-Available platforms are: hyper, claude, copilot.`,
+Available platforms are: claude, copilot.`,
 	Example: `
-# Authenticate with Charm Hyper
-crush login
-
 # Authenticate with Claude Code Max
 crush login claude
 
@@ -38,7 +35,6 @@ crush login claude
 crush login copilot
   `,
 	ValidArgs: []cobra.Completion{
-		"hyper",
 		"claude",
 		"anthropic",
 		"copilot",
@@ -53,13 +49,11 @@ crush login copilot
 		}
 		defer app.Shutdown()
 
-		provider := "hyper"
+		provider := "claude"
 		if len(args) > 0 {
 			provider = args[0]
 		}
 		switch provider {
-		case "hyper":
-			return loginHyper()
 		case "anthropic", "claude":
 			return loginClaude()
 		case "copilot", "github", "github-copilot":
