@@ -112,6 +112,12 @@ UPDATE workflow_steps SET
 WHERE id = ?
 RETURNING *;
 
+-- name: SetStepInputContext :one
+UPDATE workflow_steps SET
+    input_context_json = ?
+WHERE id = ?
+RETURNING *;
+
 -- name: StartWorkflowStep :one
 UPDATE workflow_steps SET
     status = 'running',
@@ -138,6 +144,12 @@ RETURNING *;
 -- name: SetStepApprovalStatus :one
 UPDATE workflow_steps SET
     approval_status = ?
+WHERE id = ?
+RETURNING *;
+
+-- name: SetStepRequiresApproval :one
+UPDATE workflow_steps SET
+    requires_approval = ?
 WHERE id = ?
 RETURNING *;
 

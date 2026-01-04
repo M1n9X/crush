@@ -957,6 +957,88 @@ func (q *Queries) SetStepApprovalStatus(ctx context.Context, arg SetStepApproval
 	return i, err
 }
 
+const setStepInputContext = `-- name: SetStepInputContext :one
+UPDATE workflow_steps SET
+    input_context_json = ?
+WHERE id = ?
+RETURNING id, workflow_id, step_index, step_type, agent, agent_session_id, status, title, input_context_json, output_json, review_result_json, retry_count, max_retries, requires_approval, approval_status, error_message, created_at, updated_at, started_at, completed_at, node_id
+`
+
+type SetStepInputContextParams struct {
+	InputContextJson sql.NullString `json:"input_context_json"`
+	ID               string         `json:"id"`
+}
+
+func (q *Queries) SetStepInputContext(ctx context.Context, arg SetStepInputContextParams) (WorkflowStep, error) {
+	row := q.queryRow(ctx, q.setStepInputContextStmt, setStepInputContext, arg.InputContextJson, arg.ID)
+	var i WorkflowStep
+	err := row.Scan(
+		&i.ID,
+		&i.WorkflowID,
+		&i.StepIndex,
+		&i.StepType,
+		&i.Agent,
+		&i.AgentSessionID,
+		&i.Status,
+		&i.Title,
+		&i.InputContextJson,
+		&i.OutputJson,
+		&i.ReviewResultJson,
+		&i.RetryCount,
+		&i.MaxRetries,
+		&i.RequiresApproval,
+		&i.ApprovalStatus,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.NodeID,
+	)
+	return i, err
+}
+
+const setStepRequiresApproval = `-- name: SetStepRequiresApproval :one
+UPDATE workflow_steps SET
+    requires_approval = ?
+WHERE id = ?
+RETURNING id, workflow_id, step_index, step_type, agent, agent_session_id, status, title, input_context_json, output_json, review_result_json, retry_count, max_retries, requires_approval, approval_status, error_message, created_at, updated_at, started_at, completed_at, node_id
+`
+
+type SetStepRequiresApprovalParams struct {
+	RequiresApproval int64  `json:"requires_approval"`
+	ID               string `json:"id"`
+}
+
+func (q *Queries) SetStepRequiresApproval(ctx context.Context, arg SetStepRequiresApprovalParams) (WorkflowStep, error) {
+	row := q.queryRow(ctx, q.setStepRequiresApprovalStmt, setStepRequiresApproval, arg.RequiresApproval, arg.ID)
+	var i WorkflowStep
+	err := row.Scan(
+		&i.ID,
+		&i.WorkflowID,
+		&i.StepIndex,
+		&i.StepType,
+		&i.Agent,
+		&i.AgentSessionID,
+		&i.Status,
+		&i.Title,
+		&i.InputContextJson,
+		&i.OutputJson,
+		&i.ReviewResultJson,
+		&i.RetryCount,
+		&i.MaxRetries,
+		&i.RequiresApproval,
+		&i.ApprovalStatus,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.NodeID,
+	)
+	return i, err
+}
+
 const startWorkflowStep = `-- name: StartWorkflowStep :one
 UPDATE workflow_steps SET
     status = 'running',

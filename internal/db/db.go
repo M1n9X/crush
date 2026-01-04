@@ -138,6 +138,12 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.setStepApprovalStatusStmt, err = db.PrepareContext(ctx, setStepApprovalStatus); err != nil {
 		return nil, fmt.Errorf("error preparing query SetStepApprovalStatus: %w", err)
 	}
+	if q.setStepInputContextStmt, err = db.PrepareContext(ctx, setStepInputContext); err != nil {
+		return nil, fmt.Errorf("error preparing query SetStepInputContext: %w", err)
+	}
+	if q.setStepRequiresApprovalStmt, err = db.PrepareContext(ctx, setStepRequiresApproval); err != nil {
+		return nil, fmt.Errorf("error preparing query SetStepRequiresApproval: %w", err)
+	}
 	if q.startWorkflowStepStmt, err = db.PrepareContext(ctx, startWorkflowStep); err != nil {
 		return nil, fmt.Errorf("error preparing query StartWorkflowStep: %w", err)
 	}
@@ -354,6 +360,16 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing setStepApprovalStatusStmt: %w", cerr)
 		}
 	}
+	if q.setStepInputContextStmt != nil {
+		if cerr := q.setStepInputContextStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing setStepInputContextStmt: %w", cerr)
+		}
+	}
+	if q.setStepRequiresApprovalStmt != nil {
+		if cerr := q.setStepRequiresApprovalStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing setStepRequiresApprovalStmt: %w", cerr)
+		}
+	}
 	if q.startWorkflowStepStmt != nil {
 		if cerr := q.startWorkflowStepStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing startWorkflowStepStmt: %w", cerr)
@@ -466,6 +482,8 @@ type Queries struct {
 	listWorkflowsByStateStmt       *sql.Stmt
 	setStepAgentSessionStmt        *sql.Stmt
 	setStepApprovalStatusStmt      *sql.Stmt
+	setStepInputContextStmt        *sql.Stmt
+	setStepRequiresApprovalStmt    *sql.Stmt
 	startWorkflowStepStmt          *sql.Stmt
 	updateMessageStmt              *sql.Stmt
 	updateSessionStmt              *sql.Stmt
@@ -517,6 +535,8 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listWorkflowsByStateStmt:       q.listWorkflowsByStateStmt,
 		setStepAgentSessionStmt:        q.setStepAgentSessionStmt,
 		setStepApprovalStatusStmt:      q.setStepApprovalStatusStmt,
+		setStepInputContextStmt:        q.setStepInputContextStmt,
+		setStepRequiresApprovalStmt:    q.setStepRequiresApprovalStmt,
 		startWorkflowStepStmt:          q.startWorkflowStepStmt,
 		updateMessageStmt:              q.updateMessageStmt,
 		updateSessionStmt:              q.updateSessionStmt,

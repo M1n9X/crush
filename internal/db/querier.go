@@ -49,6 +49,8 @@ type Querier interface {
 	ListWorkflowsByState(ctx context.Context, state string) ([]Workflow, error)
 	SetStepAgentSession(ctx context.Context, arg SetStepAgentSessionParams) (WorkflowStep, error)
 	SetStepApprovalStatus(ctx context.Context, arg SetStepApprovalStatusParams) (WorkflowStep, error)
+	SetStepInputContext(ctx context.Context, arg SetStepInputContextParams) (WorkflowStep, error)
+	SetStepRequiresApproval(ctx context.Context, arg SetStepRequiresApprovalParams) (WorkflowStep, error)
 	StartWorkflowStep(ctx context.Context, id string) (WorkflowStep, error)
 	UpdateMessage(ctx context.Context, arg UpdateMessageParams) error
 	UpdateSession(ctx context.Context, arg UpdateSessionParams) (Session, error)

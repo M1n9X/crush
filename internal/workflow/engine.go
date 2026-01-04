@@ -3,8 +3,10 @@ package workflow
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/charmbracelet/crush/internal/db"
@@ -39,18 +41,64 @@ type WorkflowEvent struct {
 
 // Engine manages workflow execution with state machine logic.
 type Engine struct {
-	queries  *db.Queries
-	registry *subagent.Registry
-	events   *pubsub.Broker[WorkflowEvent]
-	mu       sync.RWMutex
+	queries        *db.Queries
+	registry       *subagent.Registry
+	events         *pubsub.Broker[WorkflowEvent]
+	contextBuilder *ContextBuilder
+	safetyService  *SafetyService
+	contextConfig  StepContextConfig
+	mu             sync.RWMutex
+}
+
+// EngineOption configures the workflow engine.
+type EngineOption func(*Engine)
+
+// WithContextBuilder sets the context builder for the engine.
+func WithContextBuilder(cb *ContextBuilder) EngineOption {
+	return func(e *Engine) {
+		e.contextBuilder = cb
+	}
+}
+
+// WithSafetyService sets the safety service for the engine.
+func WithSafetyService(ss *SafetyService) EngineOption {
+	return func(e *Engine) {
+		e.safetyService = ss
+	}
+}
+
+// WithContextConfig sets the context configuration for the engine.
+func WithContextConfig(cfg StepContextConfig) EngineOption {
+	return func(e *Engine) {
+		e.contextConfig = cfg
+	}
 }
 
 // NewEngine creates a new workflow engine.
-func NewEngine(queries *db.Queries, registry *subagent.Registry) *Engine {
-	return &Engine{
-		queries:  queries,
-		registry: registry,
-		events:   pubsub.NewBroker[WorkflowEvent](),
+func NewEngine(queries *db.Queries, registry *subagent.Registry, opts ...EngineOption) *Engine {
+	e := &Engine{
+		queries:       queries,
+		registry:      registry,
+		events:        pubsub.NewBroker[WorkflowEvent](),
+		contextConfig: DefaultStepContextConfig(),
+	}
+	for _, opt := range opts {
+		opt(e)
+	}
+	return e
+}
+
+func deriveSandbox(profile *subagent.Profile) subagent.SandboxMode {
+	if profile == nil {
+		return subagent.SandboxReadOnly
+	}
+	switch strings.ToLower(strings.TrimSpace(profile.Permissions.Edit)) {
+	case "allow", "ask":
+		return subagent.SandboxWorkspaceWrite
+	case "danger", "full":
+		return subagent.SandboxDangerFullAccess
+	default:
+		return subagent.SandboxReadOnly
 	}
 }
 
@@ -630,6 +678,86 @@ func (e *Engine) executeStep(ctx context.Context, workflowID string, step db.Wor
 		StepStatus: StepStatusRunning,
 	})
 
+	if e.registry == nil {
+		return ErrNoSubagentAvailable
+	}
+
+	reg, err := e.registry.Resolve(step.Agent)
+	if err != nil {
+		_, _ = e.queries.FailWorkflowStep(ctx, db.FailWorkflowStepParams{
+			ErrorMessage: sql.NullString{String: err.Error(), Valid: true},
+			ID:           step.ID,
+		})
+
+		e.publishEvent(pubsub.StepFailedEvent, WorkflowEvent{
+			WorkflowID: workflowID,
+			StepID:     step.ID,
+			StepIndex:  int(step.StepIndex),
+			StepStatus: StepStatusFailed,
+			Error:      err.Error(),
+		})
+		return fmt.Errorf("%w: %s", ErrNoSubagentAvailable, step.Agent)
+	}
+	if reg.Agent == nil {
+		err := fmt.Errorf("%w: %s has no agent", ErrNoSubagentAvailable, step.Agent)
+		_, _ = e.queries.FailWorkflowStep(ctx, db.FailWorkflowStepParams{
+			ErrorMessage: sql.NullString{String: err.Error(), Valid: true},
+			ID:           step.ID,
+		})
+
+		e.publishEvent(pubsub.StepFailedEvent, WorkflowEvent{
+			WorkflowID: workflowID,
+			StepID:     step.ID,
+			StepIndex:  int(step.StepIndex),
+			StepStatus: StepStatusFailed,
+			Error:      err.Error(),
+		})
+		return err
+	}
+
+	req := subagent.Request{
+		Task:    step.Title.String,
+		Sandbox: deriveSandbox(&reg.Profile),
+		Profile: &reg.Profile,
+	}
+
+	// Build context for the step if ContextBuilder is configured, and persist it.
+	if e.contextBuilder != nil {
+		workflow, wfErr := e.queries.GetWorkflowByID(ctx, step.WorkflowID)
+		if wfErr == nil {
+			stepContext, ctxErr := e.contextBuilder.Build(
+				ctx,
+				StepFromDB(step),
+				WorkflowFromDB(workflow),
+				e.contextConfig,
+			)
+			if ctxErr == nil && stepContext != nil {
+				if contextJSON, err := json.Marshal(stepContext); err == nil && len(contextJSON) > 0 {
+					req.ContextJSON = contextJSON
+					_, _ = e.queries.SetStepInputContext(ctx, db.SetStepInputContextParams{
+						InputContextJson: sql.NullString{String: string(contextJSON), Valid: true},
+						ID:               step.ID,
+					})
+				}
+			}
+		}
+	}
+	if len(req.ContextJSON) == 0 && step.InputContextJson.Valid {
+		req.ContextJSON = []byte(step.InputContextJson.String)
+	}
+
+	// Safety check for sandbox mode if SafetyService is configured.
+	if e.safetyService != nil {
+		check := e.safetyService.EvaluateSandbox(req.Sandbox)
+		if check.RequiresGate && step.RequiresApproval == 0 {
+			_, _ = e.queries.SetStepRequiresApproval(ctx, db.SetStepRequiresApprovalParams{
+				RequiresApproval: 1,
+				ID:               step.ID,
+			})
+			step.RequiresApproval = 1
+		}
+	}
+
 	// Check if approval required for this step
 	if step.RequiresApproval != 0 && step.Status != string(StepStatusWaiting) {
 		_, _ = e.queries.UpdateWorkflowStepStatus(ctx, db.UpdateWorkflowStepStatusParams{
@@ -658,8 +786,11 @@ func (e *Engine) executeStep(ctx context.Context, workflowID string, step db.Wor
 	}
 
 	// Dispatch to subagent
-	result, err := e.dispatchToSubagent(ctx, step)
+	result, err := reg.Agent.Execute(ctx, req)
 	if err != nil {
+		if errors.Is(err, ErrApprovalRequired) {
+			return err
+		}
 		_, _ = e.queries.FailWorkflowStep(ctx, db.FailWorkflowStepParams{
 			ErrorMessage: sql.NullString{String: err.Error(), Valid: true},
 			ID:           step.ID,
@@ -701,33 +832,6 @@ func (e *Engine) executeStep(ctx context.Context, workflowID string, step db.Wor
 	})
 
 	return nil
-}
-
-// dispatchToSubagent calls the appropriate subagent for the step.
-func (e *Engine) dispatchToSubagent(ctx context.Context, step db.WorkflowStep) (*subagent.Result, error) {
-	if e.registry == nil {
-		return nil, ErrNoSubagentAvailable
-	}
-
-	reg, err := e.registry.Resolve(step.Agent)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrNoSubagentAvailable, step.Agent)
-	}
-	if reg.Agent == nil {
-		return nil, fmt.Errorf("%w: %s has no agent", ErrNoSubagentAvailable, step.Agent)
-	}
-
-	// Build request
-	req := subagent.Request{
-		Task:    step.Title.String,
-		Sandbox: subagent.SandboxReadOnly,
-		Profile: &reg.Profile,
-	}
-	if step.InputContextJson.Valid {
-		req.ContextJSON = []byte(step.InputContextJson.String)
-	}
-
-	return reg.Agent.Execute(ctx, req)
 }
 
 // Pause pauses a running workflow.
