@@ -184,4 +184,4 @@ require (
 
 replace github.com/M1n9X/codex-sdk-go => ../CODEX-SDK-GO/codex-sdk-go
 
-replace charm.land/x/vcr => ./internal/vcr
+replace charm.land/x/vcr => ./tmp/vcr
