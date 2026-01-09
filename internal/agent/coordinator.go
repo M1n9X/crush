@@ -327,6 +327,8 @@ func parseCodexReasoning(raw string) codexsdk.ModelReasoningEffort {
 		return codexsdk.ReasoningMedium
 	case "high":
 		return codexsdk.ReasoningHigh
+	case "xhigh", "extra-high", "x-high":
+		return codexsdk.ReasoningXHigh
 	default:
 		return ""
 	}

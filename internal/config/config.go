@@ -275,6 +275,8 @@ type Options struct {
 	Attribution                 *Attribution `json:"attribution,omitempty" jsonschema:"description=Attribution settings for generated content"`
 	DisableMetrics              bool         `json:"disable_metrics,omitempty" jsonschema:"description=Disable sending metrics,default=false"`
 	InitializeAs                string       `json:"initialize_as,omitempty" jsonschema:"description=Name of the context file to create/update during project initialization,default=AGENTS.md,example=AGENTS.md,example=CRUSH.md,example=CLAUDE.md,example=docs/LLMs.md"`
+	EnableSDKHooks              bool         `json:"enable_sdk_hooks,omitempty" jsonschema:"description=Enable SDK hooks for tool execution logging and debugging,default=false"`
+	EnableFileCheckpointing     bool         `json:"enable_file_checkpointing,omitempty" jsonschema:"description=Enable file checkpointing for Claude SDK sessions,default=false"`
 }
 
 func (o *Options) UnmarshalJSON(data []byte) error {

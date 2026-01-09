@@ -270,6 +270,16 @@ func (c *ClaudeCodeSubagent) buildClaudeOptions(ctx context.Context, agentCfg co
 		options = options.WithModel(modelName)
 	}
 
+	// Add fallback model support
+	if fallbackModel := c.determineFallbackModel(agentCfg); fallbackModel != "" {
+		options = options.WithFallbackModel(fallbackModel)
+	}
+
+	// Add thinking token limits based on prompt analysis
+	if thinkingTokens := detectThinkingTokens(req.Task); thinkingTokens > 0 {
+		options = options.WithMaxThinkingTokens(int(thinkingTokens))
+	}
+
 	if req.Metadata != nil {
 		if resume := strings.TrimSpace(req.Metadata["resume_token"]); resume != "" {
 			options = options.WithResume(resume).WithContinueConversation(true)
@@ -278,6 +288,16 @@ func (c *ClaudeCodeSubagent) buildClaudeOptions(ctx context.Context, agentCfg co
 
 	if sysPrompt := c.renderSystemPrompt(ctx, req.Profile); sysPrompt != "" {
 		options = options.WithSystemPromptString(sysPrompt)
+	}
+
+	// Add hooks support if enabled
+	if c.coord.cfg.Options != nil && c.coord.cfg.Options.EnableSDKHooks {
+		options = options.WithHooks(buildDefaultHooks())
+	}
+
+	// Add file checkpointing if enabled
+	if c.coord.cfg.Options != nil && c.coord.cfg.Options.EnableFileCheckpointing {
+		options = options.WithEnableFileCheckpointing(true)
 	}
 
 	return options
@@ -359,6 +379,23 @@ func (c *ClaudeCodeSubagent) effectiveModelName(agentCfg config.Agent, req subag
 	}
 	if model, ok := c.coord.cfg.Models[agentCfg.Model]; ok {
 		return model.Model
+	}
+	return ""
+}
+
+// determineFallbackModel determines the fallback model based on agent configuration
+func (c *ClaudeCodeSubagent) determineFallbackModel(agentCfg config.Agent) string {
+	if c.coord == nil || c.coord.cfg == nil {
+		return ""
+	}
+	modelCfg, ok := c.coord.cfg.Models[agentCfg.Model]
+	if !ok || modelCfg.Retry == nil || len(modelCfg.Retry.FallbackModels) == 0 {
+		return ""
+	}
+	// Return the first fallback model
+	if len(modelCfg.Retry.FallbackModels) > 0 {
+		// Extract just the model name from the first fallback
+		return modelCfg.Retry.FallbackModels[0]
 	}
 	return ""
 }

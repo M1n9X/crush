@@ -2,6 +2,7 @@ package subagent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -98,12 +99,22 @@ func (c *CodexSubagent) ExecuteStreamed(ctx context.Context, req Request, handle
 
 	client, err := c.factory(c.clientOptions()...)
 	if err != nil {
+		// Handle structured errors from Codex SDK
+		var invalidInputErr *codexsdk.ErrInvalidInput
+		if errors.As(err, &invalidInputErr) {
+			return nil, fmt.Errorf("invalid codex input for %s: %s", invalidInputErr.Field, invalidInputErr.Reason)
+		}
 		return nil, fmt.Errorf("build codex client: %w", err)
 	}
 
 	thread := client.StartThread(c.threadOptions(req)...)
 	streamed, err := thread.RunStreamed(ctx, codexsdk.Text(task))
 	if err != nil {
+		// Handle execution errors
+		var execErr *codexsdk.ErrExecFailed
+		if errors.As(err, &execErr) {
+			return nil, fmt.Errorf("codex execution failed (exit %d): %s", execErr.ExitCode, execErr.Stderr)
+		}
 		return nil, err
 	}
 
@@ -148,6 +159,11 @@ func (c *CodexSubagent) run(ctx context.Context, resumeToken string, req Request
 
 	client, err := c.factory(c.clientOptions()...)
 	if err != nil {
+		// Handle structured errors from Codex SDK
+		var invalidInputErr *codexsdk.ErrInvalidInput
+		if errors.As(err, &invalidInputErr) {
+			return nil, fmt.Errorf("invalid codex input for %s: %s", invalidInputErr.Field, invalidInputErr.Reason)
+		}
 		return nil, fmt.Errorf("build codex client: %w", err)
 	}
 
@@ -161,6 +177,11 @@ func (c *CodexSubagent) run(ctx context.Context, resumeToken string, req Request
 
 	turn, err := thread.Run(ctx, codexsdk.Text(task))
 	if err != nil {
+		// Handle execution errors
+		var execErr *codexsdk.ErrExecFailed
+		if errors.As(err, &execErr) {
+			return nil, fmt.Errorf("codex execution failed (exit %d): %s", execErr.ExitCode, execErr.Stderr)
+		}
 		return nil, err
 	}
 

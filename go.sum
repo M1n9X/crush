@@ -26,6 +26,8 @@ github.com/JohannesKaufmann/html-to-markdown v1.6.0 h1:04VXMiE50YYfCfLboJCLcgqF5
 github.com/JohannesKaufmann/html-to-markdown v1.6.0/go.mod h1:NUI78lGg/a7vpEJTz/0uOcYMaibytE4BUOQS8k78yPQ=
 github.com/M1n9X/claude-agent-sdk-go v0.0.0-20251115144806-282e191bc3ab h1:KqJPkELCHIJbK7NNGA1W2xUexcBsHa+e3qDrkCi1im8=
 github.com/M1n9X/claude-agent-sdk-go v0.0.0-20251115144806-282e191bc3ab/go.mod h1:zkSBbjya4NCzM6sQVJCx0LCb3jRgW2ydl264d5rp+oI=
+github.com/M1n9X/claude-agent-sdk-go v0.0.0-20260109042655-6a92eefd6a0a h1:NPK0lhWz8782wHeJGyTaJeWBPvO6P2lyUAL3r4DaxQw=
+github.com/M1n9X/claude-agent-sdk-go v0.0.0-20260109042655-6a92eefd6a0a/go.mod h1:zkSBbjya4NCzM6sQVJCx0LCb3jRgW2ydl264d5rp+oI=
 github.com/MakeNowJust/heredoc v1.0.0 h1:cXCdzVdstXyiTqTvfqk9SDHpKNjxuom+DOlyEeQ4pzQ=
 github.com/MakeNowJust/heredoc v1.0.0/go.mod h1:mG5amYoWBHf8vpLOuehzbGGw0EHxpZZ6lCpQ4fNJ8LE=
 github.com/PuerkitoBio/goquery v1.9.2/go.mod h1:GHPCaP0ODyyxqcNoFGYlAprUFH81NuRPd0GX3Zu2Mvk=
