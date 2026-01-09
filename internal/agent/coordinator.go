@@ -190,8 +190,14 @@ func (c *coordinator) subagentRegistry(_ context.Context) (*subagent.Registry, e
 	}
 
 	defs, err := loadSubAgentDefinitionsWithCache(c.cfg.WorkingDir())
-	if err != nil || len(defs) == 0 {
-		// Fall back to builtins if loading fails.
+	if err != nil {
+		slog.Warn("Failed to load subagent definitions, using builtins", "error", err)
+		defs = make([]SubAgentDefinition, 0, len(builtinSubAgentDefinitions()))
+		for _, def := range builtinSubAgentDefinitions() {
+			defs = append(defs, def)
+		}
+	} else if len(defs) == 0 {
+		slog.Info("No subagent definitions found, using builtins")
 		defs = make([]SubAgentDefinition, 0, len(builtinSubAgentDefinitions()))
 		for _, def := range builtinSubAgentDefinitions() {
 			defs = append(defs, def)
@@ -227,18 +233,34 @@ func (c *coordinator) buildCodexOptions() subagent.CodexOptions {
 		DefaultSandbox:   subagent.SandboxReadOnly,
 	}
 
+	// CODEX_PATH validation
 	if v := strings.TrimSpace(os.Getenv("CODEX_PATH")); v != "" {
-		opts.CodexPath = v
+		if _, err := os.Stat(v); err != nil {
+			slog.Warn("CODEX_PATH does not exist, using default", "path", v, "error", err)
+		} else {
+			opts.CodexPath = v
+		}
 	}
+
+	// CODEX_BASE_URL validation
 	if v := strings.TrimSpace(os.Getenv("CODEX_BASE_URL")); v != "" {
-		opts.BaseURL = v
+		if !strings.HasPrefix(v, "http://") && !strings.HasPrefix(v, "https://") {
+			slog.Warn("CODEX_BASE_URL must start with http:// or https://, ignoring", "url", v)
+		} else {
+			opts.BaseURL = v
+		}
 	}
+
+	// CODEX_API_KEY - no validation needed, any string is valid
 	if v := strings.TrimSpace(os.Getenv("CODEX_API_KEY")); v != "" {
 		opts.APIKey = v
 	}
+
+	// CODEX_MODEL - no validation needed
 	if v := strings.TrimSpace(os.Getenv("CODEX_MODEL")); v != "" {
 		opts.DefaultModel = v
 	}
+
 	if v := parseCodexSandbox(os.Getenv("CODEX_SANDBOX_MODE")); v != "" {
 		opts.DefaultSandbox = v
 	}
@@ -608,6 +630,13 @@ func (c *coordinator) applyThinkingControls(call *SessionAgentCall, providerType
 	}
 }
 
+const (
+	// Thinking token budgets for different thinking intensity levels
+	thinkingTokensIntense  = 32_000 // For intensive thinking ("think harder", "ultrathink")
+	thinkingTokensModerate = 10_000 // For moderate thinking ("think hard", "megathink")
+	thinkingTokensBasic    = 4_000  // For basic thinking ("think")
+)
+
 func detectThinkingTokens(prompt string) int64 {
 	lower := strings.ToLower(prompt)
 	switch {
@@ -618,15 +647,15 @@ func detectThinkingTokens(prompt string) int64 {
 		strings.Contains(lower, "think super hard"),
 		strings.Contains(lower, "think very hard"),
 		strings.Contains(lower, "ultrathink"):
-		return 32_000
+		return thinkingTokensIntense
 	case strings.Contains(lower, "think about it"),
 		strings.Contains(lower, "think a lot"),
 		strings.Contains(lower, "think hard"),
 		strings.Contains(lower, "think more"),
 		strings.Contains(lower, "megathink"):
-		return 10_000
+		return thinkingTokensModerate
 	case strings.Contains(lower, "think"):
-		return 4_000
+		return thinkingTokensBasic
 	default:
 		return 0
 	}

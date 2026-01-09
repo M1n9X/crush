@@ -28,10 +28,26 @@ type ErrorStats struct {
 	mu          sync.RWMutex
 }
 
-// Global error statistics
-var globalErrorStats = &ErrorStats{
-	errorCounts: make(map[string]int64),
-	lastErrors:  make(map[string]time.Time),
+// Global error statistics with lazy initialization
+var (
+	globalErrorStats *ErrorStats
+	errorStatsOnce   sync.Once
+)
+
+// initErrorStats initializes the global error statistics (thread-safe).
+func initErrorStats() {
+	errorStatsOnce.Do(func() {
+		globalErrorStats = &ErrorStats{
+			errorCounts: make(map[string]int64),
+			lastErrors:  make(map[string]time.Time),
+		}
+	})
+}
+
+// getErrorStats returns the initialized global error stats.
+func getErrorStats() *ErrorStats {
+	initErrorStats()
+	return globalErrorStats
 }
 
 // UpdateErrorStats records an error occurrence.
@@ -39,31 +55,34 @@ func UpdateErrorStats(err error) {
 	category := ClassifyError(err)
 	key := errorCategoryToString(category)
 
-	globalErrorStats.mu.Lock()
-	defer globalErrorStats.mu.Unlock()
+	stats := getErrorStats()
+	stats.mu.Lock()
+	defer stats.mu.Unlock()
 
-	globalErrorStats.errorCounts[key]++
-	globalErrorStats.lastErrors[key] = time.Now()
+	stats.errorCounts[key]++
+	stats.lastErrors[key] = time.Now()
 }
 
 // GetErrorFrequency returns the count of how many times an error category occurred.
 func GetErrorFrequency(category ErrorCategory) int64 {
 	key := errorCategoryToString(category)
 
-	globalErrorStats.mu.RLock()
-	defer globalErrorStats.mu.RUnlock()
+	stats := getErrorStats()
+	stats.mu.RLock()
+	defer stats.mu.RUnlock()
 
-	return globalErrorStats.errorCounts[key]
+	return stats.errorCounts[key]
 }
 
 // GetLastErrorTime returns when an error category last occurred.
 func GetLastErrorTime(category ErrorCategory) *time.Time {
 	key := errorCategoryToString(category)
 
-	globalErrorStats.mu.RLock()
-	defer globalErrorStats.mu.RUnlock()
+	stats := getErrorStats()
+	stats.mu.RLock()
+	defer stats.mu.RUnlock()
 
-	if t, ok := globalErrorStats.lastErrors[key]; ok {
+	if t, ok := stats.lastErrors[key]; ok {
 		return &t
 	}
 	return nil
@@ -71,19 +90,20 @@ func GetLastErrorTime(category ErrorCategory) *time.Time {
 
 // GetAllErrorStats returns statistics for all error categories.
 func GetAllErrorStats() []ErrorStat {
-	globalErrorStats.mu.RLock()
-	defer globalErrorStats.mu.RUnlock()
+	stats := getErrorStats()
+	stats.mu.RLock()
+	defer stats.mu.RUnlock()
 
-	var stats []ErrorStat
-	for key, count := range globalErrorStats.errorCounts {
-		lastOccurred := globalErrorStats.lastErrors[key]
-		stats = append(stats, ErrorStat{
+	var result []ErrorStat
+	for key, count := range stats.errorCounts {
+		lastOccurred := stats.lastErrors[key]
+		result = append(result, ErrorStat{
 			Category:     key,
 			Count:        count,
 			LastOccurred: lastOccurred,
 		})
 	}
-	return stats
+	return result
 }
 
 // ErrorStat represents statistics for a single error category.
@@ -95,11 +115,19 @@ type ErrorStat struct {
 
 // ClearErrorStats resets all error statistics.
 func ClearErrorStats() {
-	globalErrorStats.mu.Lock()
-	defer globalErrorStats.mu.Unlock()
+	stats := getErrorStats()
+	stats.mu.Lock()
+	defer stats.mu.Unlock()
 
-	globalErrorStats.errorCounts = make(map[string]int64)
-	globalErrorStats.lastErrors = make(map[string]time.Time)
+	stats.errorCounts = make(map[string]int64)
+	stats.lastErrors = make(map[string]time.Time)
+}
+
+// ResetErrorStatsForTest resets error statistics for testing.
+// This function is intended for use in unit tests only.
+func ResetErrorStatsForTest() {
+	errorStatsOnce = sync.Once{}
+	globalErrorStats = nil
 }
 
 func errorCategoryToString(category ErrorCategory) string {
@@ -148,26 +176,31 @@ func ClassifyError(err error) ErrorCategory {
 		return classifyProviderError(providerErr)
 	}
 
-	// Fallback to string matching
+	// Fallback to string matching with more specific patterns
 	errStr := strings.ToLower(err.Error())
 
-	if containsAny(errStr, []string{"rate limit", "too many requests", "429"}) {
+	// Check rate limit first (most specific)
+	if containsAny(errStr, []string{"rate limit", "too many requests", "status 429", "status code 429"}) {
 		return ErrorCategoryRateLimit
 	}
 
-	if containsAny(errStr, []string{"network", "connection", "timeout", "dial", "eof"}) {
+	// Check network errors (avoid broad matches)
+	if containsAny(errStr, []string{"network error", "connection refused", "connection timeout", "dial tcp", "i/o timeout", "eof"}) {
 		return ErrorCategoryNetwork
 	}
 
-	if containsAny(errStr, []string{"authentication", "unauthorized", "401", "invalid key", "api key"}) {
+	// Check authentication (more specific patterns)
+	if containsAny(errStr, []string{"authentication failed", "unauthorized", "status 401", "status code 401", "invalid api key", "api key"}) {
 		return ErrorCategoryAuthentication
 	}
 
-	if containsAny(errStr, []string{"permission", "forbidden", "403"}) {
+	// Check permission errors
+	if containsAny(errStr, []string{"permission denied", "forbidden", "status 403", "status code 403"}) {
 		return ErrorCategoryPermission
 	}
 
-	if containsAny(errStr, []string{"model", "invalid model", "not found", "404"}) {
+	// Check model errors (more specific patterns to avoid false positives)
+	if containsAny(errStr, []string{"invalid model", "model not found", "model error", "status 404", "status code 404"}) {
 		return ErrorCategoryModel
 	}
 

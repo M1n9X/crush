@@ -182,6 +182,6 @@ require (
 	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
 )
 
-replace github.com/M1n9X/codex-sdk-go => ../CODEX-SDK-GO/codex-sdk-go
+replace github.com/M1n9X/codex-sdk-go => ../codex-sdk-go
 
 replace charm.land/x/vcr => ./tmp/vcr

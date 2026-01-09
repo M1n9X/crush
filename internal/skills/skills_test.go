@@ -150,7 +150,7 @@ func TestSkillValidate(t *testing.T) {
 			name:    "name doesn't match directory",
 			skill:   Skill{Name: "my-skill", Description: "Some description.", Path: "/skills/other-skill"},
 			wantErr: true,
-			errMsg:  "must match directory",
+			errMsg:  "must exactly match directory",
 		},
 		{
 			name:    "description too long",

@@ -48,8 +48,8 @@ func (s *Skill) Validate() error {
 		if !namePattern.MatchString(s.Name) {
 			errs = append(errs, errors.New("name must be alphanumeric with hyphens, no leading/trailing/consecutive hyphens"))
 		}
-		if s.Path != "" && !strings.EqualFold(filepath.Base(s.Path), s.Name) {
-			errs = append(errs, fmt.Errorf("name %q must match directory %q", s.Name, filepath.Base(s.Path)))
+		if s.Path != "" && filepath.Base(s.Path) != s.Name {
+			errs = append(errs, fmt.Errorf("name %q must exactly match directory %q (case-sensitive)", s.Name, filepath.Base(s.Path)))
 		}
 	}
 
